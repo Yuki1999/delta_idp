@@ -1,0 +1,132 @@
+{
+  "name": "三星装箱单模板",
+  "document_type": "packing_list",
+  "vendor": "samsung",
+  "description": "三星电机(Samsung Electro-Mechanics)装箱单专用提取模板",
+  "layout_notes": "三星装箱单与发票布局相似。表头信息一致，商品明细表列名不同，包含C/T NO(箱号)、箱数、净重、毛重等。",
+  "extraction_fields": [
+    {
+      "name": "invoice_no",
+      "label": "对应发票号码",
+      "description": "关联发票号，位于'8)No. & date of invoice'标签后",
+      "search_patterns": ["No. & date of invoice"],
+      "data_type": "string",
+      "samsung_location": "右上角，第7-8行"
+    },
+    {
+      "name": "shipper",
+      "label": "发货单位",
+      "description": "发货人，位于'1)Shipper/Export'标签下",
+      "search_patterns": ["SAMSUNG ELECTRO-MECHANICS", "Shipper/Export"],
+      "data_type": "string",
+      "samsung_location": "左上角"
+    },
+    {
+      "name": "consignee",
+      "label": "收货单位",
+      "description": "收货人，位于'2)For Account & Risk of Messrs'标签下",
+      "search_patterns": ["For Account & Risk"],
+      "data_type": "string",
+      "samsung_location": "左列"
+    },
+    {
+      "name": "notify_party",
+      "label": "通知方",
+      "description": "通知方",
+      "search_patterns": ["Notify party"],
+      "data_type": "string",
+      "samsung_location": "左列"
+    },
+    {
+      "name": "port_of_loading",
+      "label": "装货港",
+      "description": "装货港",
+      "search_patterns": ["Port of loading"],
+      "data_type": "string",
+      "samsung_location": "左列"
+    },
+    {
+      "name": "final_destination",
+      "label": "目的地",
+      "description": "最终目的地",
+      "search_patterns": ["Final destination"],
+      "data_type": "string",
+      "samsung_location": "中部"
+    },
+    {
+      "name": "carrier",
+      "label": "承运人",
+      "description": "承运人/运输方式",
+      "search_patterns": ["Carrier"],
+      "data_type": "string"
+    },
+    {
+      "name": "total_packages",
+      "label": "件数",
+      "description": "总件数，三星装箱单中通常为TOTAL行的箱数合计",
+      "search_patterns": ["TOTAL", "C/T NO"],
+      "data_type": "number",
+      "samsung_location": "商品明细底部TOTAL行"
+    },
+    {
+      "name": "gross_weight",
+      "label": "毛重",
+      "description": "总毛重(KG)，三星装箱单底部TOTAL行的毛重合计",
+      "search_patterns": ["Gross Weight", "G.W.", "TOTAL"],
+      "data_type": "number",
+      "samsung_location": "底部合计区"
+    },
+    {
+      "name": "net_weight",
+      "label": "净重",
+      "description": "总净重(KG)，三星装箱单底部TOTAL行的净重合计",
+      "search_patterns": ["Net Weight", "N.W.", "TOTAL"],
+      "data_type": "number",
+      "samsung_location": "底部合计区"
+    },
+    {
+      "name": "measurement",
+      "label": "体积",
+      "description": "总体积(CBM)，三星装箱单底部TOTAL行的体积合计",
+      "search_patterns": ["Measurement", "CBM", "MEAS"],
+      "data_type": "number",
+      "samsung_location": "底部合计区"
+    },
+    {
+      "name": "packing_type",
+      "label": "包装方式",
+      "description": "包装类型，三星一般为Carton纸箱",
+      "search_patterns": ["Carton", "C/T"],
+      "data_type": "string",
+      "samsung_location": "商品明细表'C/T NO'列标识"
+    },
+    {
+      "name": "country_of_origin",
+      "label": "原产国",
+      "description": "原产国，三星一般为Korea",
+      "search_patterns": ["made in Korea", "made in"],
+      "data_type": "string"
+    },
+    {
+      "name": "lc_no",
+      "label": "信用证号",
+      "description": "信用证号",
+      "search_patterns": ["No. & date of L/C"],
+      "data_type": "string"
+    }
+  ],
+  "line_item_fields": [
+    {"name": "item_no", "label": "序号"},
+    {"name": "po_no", "label": "采购订单号"},
+    {"name": "part_no", "label": "产品编号"},
+    {"name": "samsung_pn", "label": "三星料号"},
+    {"name": "description", "label": "品名"},
+    {"name": "quantity", "label": "数量"},
+    {"name": "unit", "label": "单位"},
+    {"name": "carton_no", "label": "箱号", "description": "C/T NO"},
+    {"name": "carton_qty", "label": "箱数", "description": "每箱件数"},
+    {"name": "net_weight", "label": "净重(KG)"},
+    {"name": "gross_weight", "label": "毛重(KG)"},
+    {"name": "measurement", "label": "体积(CBM)"}
+  ]
+}

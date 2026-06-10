@@ -1,0 +1,294 @@
+[
+  {
+    "id": "99deb679",
+    "filename": "985aec09_ES12651008_IV(1).xlsx",
+    "document_type": "invoice",
+    "vendor": "samsung",
+    "method": "qwen_vision",
+    "fields": [
+      {
+        "name": "invoice_no",
+        "label": "发票号码",
+        "value": "ES12651008               MAY.14,2026",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "invoice_date",
+        "label": "发票日期",
+        "value": "2026-05-14",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "shipper",
+        "label": "发货单位",
+        "value": "Samsung Electro-Mechanics(Shenzhen) Co., Ltd\n14F Tower A,SCC/Junction of Houhai Blvd and\nHaide 1st Road Nanshan District\nShenzhen, China 518064",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "consignee",
+        "label": "收货单位",
+        "value": "TECH-COM (SHANGHAI) COMPUTER CO LTD\nSONGJIANG EXPORT PROCESSING ZONE,NO 58 SAN\nSONGJIANG EXPORT PROCESSING ZONE 201613",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "notify_party",
+        "label": "通知方",
+        "value": "QUANTA(C:NB)\n.O. 68, SANZHUANG ROAD,SHANGHAI\nSONGJIANG EXPORT PROCESSING ZONE 123456",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "final_destination",
+        "label": "目的地",
+        "value": "China",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "currency",
+        "label": "币制",
+        "value": "USD",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "country_of_origin",
+        "label": "原产国",
+        "value": "China",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "lc_issuing_bank",
+        "label": "开证行",
+        "value": "143022",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "goods_description",
+        "label": "货物描述",
+        "value": "13)Description of good",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "marks_and_numbers",
+        "label": "唛头",
+        "value": "Quanta(C:NB)\nC/T NO:3t",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "port_of_loading",
+        "label": "装货港",
+        "value": "",
+        "confidence": "low",
+        "location": ""
+      },
+      {
+        "name": "carrier",
+        "label": "承运人",
+        "value": "Carrier",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "sailing_date",
+        "label": "船期",
+        "value": "Made in China",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "lc_no",
+        "label": "信用证号",
+        "value": "",
+        "confidence": "low",
+        "location": ""
+      },
+      {
+        "name": "total_amount",
+        "label": "总价",
+        "value": "90,000    160000",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "total_quantity",
+        "label": "总数量",
+        "value": "90,000    160000",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "incoterms",
+        "label": "贸易术语",
+        "value": "",
+        "confidence": "low",
+        "location": ""
+      },
+      {
+        "name": "page",
+        "label": "页码",
+        "value": "",
+        "confidence": "low",
+        "location": ""
+      }
+    ],
+    "line_items": [],
+    "markdown": "",
+    "field_count": 19,
+    "created_at": "2026-06-10T08:03:48.376Z"
+  },
+  {
+    "id": "5e531920",
+    "filename": "7b07dca7_DS12650253_IV(1).xlsx",
+    "document_type": "invoice",
+    "vendor": "samsung",
+    "method": "qwen_vision",
+    "fields": [
+      {
+        "name": "invoice_no",
+        "label": "发票号码",
+        "value": "DS12650253               MAY.11,2026",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "invoice_date",
+        "label": "发票日期",
+        "value": "2026-05-11",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "shipper",
+        "label": "发货单位",
+        "value": "SAMSUNG ELECTRO-MECHANICS(SHENZHEN) CO., LTD\n后海大道与海德一路交汇SCC中洲控股中心A座14层\n南山区，深圳，中国 518064",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "consignee",
+        "label": "收货单位",
+        "value": "XIAMEN HOLDER ELECTRONICS CO.,LTD\nRoom 602,No.57 WangHai Road,XiaMen\nThe second session Software Park 123456",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "notify_party",
+        "label": "通知方",
+        "value": "G-PULSE_HOLDER\nPU DONG DISTRICT,SHANGHAI\nKANG QIAO ROAD 123456",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "final_destination",
+        "label": "目的地",
+        "value": "China",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "currency",
+        "label": "币制",
+        "value": "RMB",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "country_of_origin",
+        "label": "原产国",
+        "value": "Korea",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "incoterms",
+        "label": "贸易术语",
+        "value": "DAP SUZHOU",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "lc_no",
+        "label": "信用证号",
+        "value": "ECL--HOLDER TT           JUN.26,2019",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "goods_description",
+        "label": "货物描述",
+        "value": "13)Description of good",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "marks_and_numbers",
+        "label": "唛头",
+        "value": "G-PULSE_Holder\nC/T NO:58t",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "page",
+        "label": "页码",
+        "value": "1",
+        "confidence": "high",
+        "location": ""
+      },
+      {
+        "name": "port_of_loading",
+        "label": "装货港",
+        "value": "",
+        "confidence": "low",
+        "location": ""
+      },
+      {
+        "name": "carrier",
+        "label": "承运人",
+        "value": "Carrier",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "sailing_date",
+        "label": "船期",
+        "value": "made in Korea",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "lc_issuing_bank",
+        "label": "开证行",
+        "value": "XIAMEN HOLDER ELECTRONICS CO.,LTD",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "total_amount",
+        "label": "总价",
+        "value": "8,422,000    19838000",
+        "confidence": "medium",
+        "location": ""
+      },
+      {
+        "name": "total_quantity",
+        "label": "总数量",
+        "value": "8,422,000    19838000",
+        "confidence": "medium",
+        "location": ""
+      }
+    ],
+    "line_items": [],
+    "markdown": "### 客户信息\n| 序号 | 字段 | 值 | 置信度 |\n|------|------|-----|--------|\n| 1 | 委托单位 | XIAMEN HOLDER ELECTRONICS CO.,LTD | 高 |\n| 2 | 报关单位 | SAMSUNG ELECTRO-MECHANICS(SHENZHEN) CO., LTD | 高 |\n| 3 | 业务类型 | 出口 | 高 |\n\n### 贸易主体类\n| 序号 | 字段 | 值 | 置信度 |\n|------|------|-----|--------|\n| 4 | 发货单位 | SAMSUNG ELECTRO-MECHANICS(SHENZHEN) CO., LTD | 高 |\n| 5 | 收货单位 | XIAMEN HOLDER ELECTRONICS CO.,LTD | 高 |\n\n### 物流信息类\n| 序号 | 字段 | 值 | 置信度 |\n|------|------|-----|--------|\n| 6 | 运输方式 | 海运（推导） | 中 |\n| 13 | 目的地/装货港 | China | 高 |\n| 14 | 进出境关别 | 未提供 | 低 |\n| 15 | 起抵运地 | 南山区，深圳，中国 518064 → 上海浦东区 | 高 |\n| 21 | 最终目的国 | 中国 | 高 |\n\n### 发票字段\n| 序号 | 字段 | 值 | 置信度 |\n|------|------|-----|--------|\n| 12 | 发票号码 | DS12650253 | 高 |\n| 16 | 产品编号 | CL10B332KB8WPNC, CL10B104KB8WPNC, CL21B474KBFVPNE, CL32Y106KBJ4PNE | 高 |\n| 17 | 申报数量 | 164,000; 668,000; 44,000; 202,000 | 高 |\n| 18 | 币制 | RMB | 高 |\n| 19 | 总价 | 164,000 + 1,336,000 + 132,000 + 808,000 = 2,440,000 RMB | 高 |\n| 20 | 原产国 | Korea | 高 |\n\n### 装箱单字段\n> 注：本单据为发票，无明确装箱单信息，以下字段无法提取。\n| 序号 | 字段 | 值 | 置信度 |\n|------|------|-----|--------|\n| 7 | 件数 | null | 低 |\n| 8 | 毛重 | null | 低 |\n| 9 | 净重 | null | 低 |\n| 10 | 体积 | null | 低 |\n| 11 | 包装方式 | null | 低 |\n\n### 商品明细表\n| 序号 | 产品编号 | 申报数量 | 单位价格 (RMB/1000) | 金额 (RMB) | 备注 |\n|------|----------|-----------|-----------------------|-------------|------|\n| 1 | CL10B332KB8WPNC | 164,000 | 1 | 164,000 | ITEM: 5 |\n| 2 | CL10B104KB8WPNC | 668,000 | 2 | 1,336,000 | ITEM: 8 |\n| 3 | CL21B474KBFVPNE | 44,000 | 3 | 132,000 | ITEM: 22 |\n| 4 | CL32Y106KBJ4PNE | 202,000 | 4 | 808,000 | ITEM: 26 |\n\n---\n\n**元信息**  \n- **单据类型**: invoice  \n- **厂商**: samsung  \n- **使用的模板**: 商业发票标准模板（Samsung专用）  \n\n> ✅ 已根据用户指定的单据类型和厂商直接提取，无需重新识别。所有字段均基于解析内容匹配并标注置信度。",
+    "field_count": 19,
+    "created_at": "2026-06-10T08:18:43.851Z"
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "name": "发票通用模板",
+  "document_type": "invoice",
+  "vendor": "generic",
+  "description": "通用商业发票报关信息提取模板，覆盖客户信息、贸易主体、物流、发票等字段",
+  "extraction_fields": [
+    { "name": "client_name", "label": "委托单位", "description": "委托报关的客户公司全称", "search_patterns": ["委托", "客户", "公司名"], "data_type": "string" },
+    { "name": "customs_broker", "label": "报关单位", "description": "执行报关的供应商/报关行", "search_patterns": ["报关行", "报关单位", "供应商"], "data_type": "string" },
+    { "name": "business_type", "label": "业务类型", "description": "进口/出口/转关", "search_patterns": ["进口", "出口", "转关", "Import", "Export"], "data_type": "string" },
+    { "name": "shipper", "label": "发货单位", "description": "发货方全称及地址，出口时为卖方，进口时为境外供应商", "search_patterns": ["Shipper", "Exporter", "Seller", "发货", "发货人"], "data_type": "string" },
+    { "name": "consignee", "label": "收货单位", "description": "收货方全称及地址，进口时为买方，出口时为境外客户", "search_patterns": ["Consignee", "Buyer", "收货", "收货人", "For Account"], "data_type": "string" },
+    { "name": "transport_mode", "label": "运输方式", "description": "海运/空运/陆运，由业务类型和口岸信息判断", "search_patterns": ["BY SEA", "BY AIR", "BY TRUCK", "运输方式", "Vessel", "Flight", "Carrier"], "data_type": "string" },
+    { "name": "invoice_no", "label": "发票号码", "description": "发票唯一编号", "search_patterns": ["Invoice No", "invoice no", "发票号码", "INVOICE #"], "data_type": "string" },
+    { "name": "invoice_date", "label": "发票日期", "description": "发票开具日期 YYYY-MM-DD", "search_patterns": ["Date", "invoice date", "日期"], "data_type": "date" },
+    { "name": "destination", "label": "目的地/装货港", "description": "出口看目的港，进口看装货港", "search_patterns": ["destination", "目的港", "Port of", "装货港", "Final destination"], "data_type": "string" },
+    { "name": "customs_port", "label": "进出境关别", "description": "报关海关关区，来自客户邮件信息", "search_patterns": ["关区", "海关", "口岸"], "data_type": "string" },
+    { "name": "origin_destination", "label": "起抵运地", "description": "起始地或到达地，发票上体现", "search_patterns": ["起运", "抵运", "Port of loading", "POL"], "data_type": "string" },
+    { "name": "currency", "label": "币制", "description": "货币代码 USD/CNY/EUR/JPY/RMB", "search_patterns": ["RMB", "USD", "EUR", "JPY", "KRW", "Currency", "币制"], "data_type": "string" },
+    { "name": "total_amount", "label": "总价", "description": "发票总金额，保留2位小数", "search_patterns": ["TOTAL", "Total", "总价", "总金额", "Amount"], "data_type": "number" },
+    { "name": "country_of_origin", "label": "原产国", "description": "货物原产国", "search_patterns": ["Origin", "原产国", "Country of Origin", "Made in"], "data_type": "string" },
+    { "name": "final_destination_country", "label": "最终目的国", "description": "货物最终到达国家，业务类型+起抵运地结合判断", "search_patterns": ["Final Destination", "最终目的国"], "data_type": "string" },
+    { "name": "notify_party", "label": "通知方", "description": "通知方", "search_patterns": ["Notify party", "Notify"], "data_type": "string" },
+    { "name": "incoterms", "label": "贸易术语", "description": "FOB/CIF/DAP/EXW等", "search_patterns": ["DAP", "FOB", "CIF", "EXW", "FCA"], "data_type": "string" },
+    { "name": "marks_and_numbers", "label": "唛头", "description": "包装唛头", "search_patterns": ["Marks and numbers", "唛头"], "data_type": "string" }
+  ],
+  "line_item_fields": [
+    { "name": "item_no", "label": "序号" },
+    { "name": "po_no", "label": "订单号" },
+    { "name": "part_no", "label": "产品编号" },
+    { "name": "samsung_pn", "label": "三星料号" },
+    { "name": "description", "label": "品名" },
+    { "name": "quantity", "label": "申报数量" },
+    { "name": "unit", "label": "单位" },
+    { "name": "unit_price", "label": "单价" },
+    { "name": "amount", "label": "金额" }
+  ]
+}

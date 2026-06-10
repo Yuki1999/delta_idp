@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delta IDP - 单据关键信息抽取 Demo</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <svg width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#2563eb"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="18" font-weight="bold">D</text></svg>
+      <span class="logo-text">Delta IDP</span>
+    </div>
+    <nav class="nav">
+      <a href="/" class="nav-link active">单据抽取</a>
+      <a href="/agent" class="nav-link">智能助手 Agent</a>
+    </nav>
+    <div class="header-info">苏州得尔达国际物流有限公司</div>
+  </div>
+</header>
+
+<main class="main-container">
+  <!-- Left Panel: Upload & Controls -->
+  <aside class="sidebar">
+    <section class="panel">
+      <h2 class="panel-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        上传单据
+      </h2>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.png,.jpg" multiple hidden>
+        <div class="upload-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </div>
+        <p>拖拽文件到此处或 <button class="btn-link" onclick="document.getElementById('fileInput').click()">点击上传</button></p>
+        <p class="upload-hint">支持 .xlsx / .xls / .png / .jpg</p>
+      </div>
+      <div class="file-list" id="fileList"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        抽取配置
+      </h2>
+      <div class="form-group">
+        <label>文档类型</label>
+        <select id="docType" class="select">
+          <option value="auto">自动识别</option>
+          <option value="invoice">发票 (Invoice)</option>
+          <option value="packing_list">装箱单 (Packing List)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>提取模板</label>
+        <select id="templateSelect" class="select">
+          <option value="auto">自动选择模板</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>技术路径</label>
+        <div class="radio-group">
+          <label class="radio-item">
+            <input type="radio" name="method" value="hybrid" checked>
+            <span class="radio-label">
+              <strong>混合模式</strong>
+              <small>规则引擎 + LLM 验证（推荐）</small>
+            </span>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="method" value="mineru">
+            <span class="radio-label">
+              <strong>MinerU 解析</strong>
+              <small>结构化解析 + 模板匹配</small>
+            </span>
+          </label>
+          <label class="radio-item">
+            <input type="radio" name="method" value="qwen">
+            <span class="radio-label">
+              <strong>Qwen3.6-27B</strong>
+              <small>端到端视觉提取</small>
+            </span>
+          </label>
+        </div>
+      </div>
+      <button id="extractBtn" class="btn btn-primary" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        开始抽取
+      </button>
+      <div id="extractStatus" class="status-msg hidden"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        示例单据
+      </h2>
+      <div class="sample-list" id="sampleList">
+        <button class="sample-item" data-file="DS12650253_IV(1).xlsx">
+          <span class="sample-badge invoice">IV</span>
+          DS12650253 发票
+        </button>
+        <button class="sample-item" data-file="DS12650253_PL(1).xlsx">
+          <span class="sample-badge packing">PL</span>
+          DS12650253 装箱单
+        </button>
+        <button class="sample-item" data-file="ES12651000_IV(1).xlsx">
+          <span class="sample-badge invoice">IV</span>
+          ES12651000 发票
+        </button>
+        <button class="sample-item" data-file="ES12651000_PL(1).xlsx">
+          <span class="sample-badge packing">PL</span>
+          ES12651000 装箱单
+        </button>
+        <button class="sample-item" data-file="ES12651008_IV(1).xlsx">
+          <span class="sample-badge invoice">IV</span>
+          ES12651008 发票
+        </button>
+        <button class="sample-item" data-file="ES12651008_PL(1).xlsx">
+          <span class="sample-badge packing">PL</span>
+          ES12651008 装箱单
+        </button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- Right Panel: Results -->
+  <section class="content">
+    <div class="content-header">
+      <h1>提取结果</h1>
+      <div class="result-tabs">
+        <button class="tab active" data-tab="fields">字段信息</button>
+        <button class="tab" data-tab="lineitems">商品明细</button>
+        <button class="tab" data-tab="raw">原始数据</button>
+        <button class="tab" data-tab="compare">路径对比</button>
+      </div>
+    </div>
+
+    <!-- Fields View -->
+    <div class="tab-content active" id="tab-fields">
+      <div class="result-grid" id="fieldResults">
+        <div class="empty-state">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          <p>请上传单据并点击"开始抽取"</p>
+          <p class="hint">支持发票和装箱单的关键信息自动提取</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line Items View -->
+    <div class="tab-content" id="tab-lineitems">
+      <div class="table-container">
+        <table class="data-table" id="lineItemTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty-state" id="lineItemsEmpty">
+          <p>暂无商品明细数据</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Raw Data View -->
+    <div class="tab-content" id="tab-raw">
+      <pre class="raw-content" id="rawContent">请先执行抽取</pre>
+    </div>
+
+    <!-- Compare View -->
+    <div class="tab-content" id="tab-compare">
+      <div class="compare-grid" id="compareGrid">
+        <div class="empty-state"><p>执行混合模式抽取后可查看路径对比</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

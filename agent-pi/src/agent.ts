@@ -40,7 +40,7 @@ const qwenModel: Model<"openai-completions"> = {
   provider: "dashscope",
   baseUrl: DASHSCOPE_BASE_URL,
   reasoning: false,
-  input: ["text"],
+  input: ["text", "image"],
   cost: { input: 0.0008, output: 0.002, cacheRead: 0, cacheWrite: 0 },
   contextWindow: 131072,
   maxTokens: 8192,

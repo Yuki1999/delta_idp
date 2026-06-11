@@ -35,46 +35,26 @@ class TemplateExtractor:
                     name = fname[:-5]
                     template = self.load_template(name)
                     if template:
+                        field_count = len(template.get("extraction_fields", []))
                         templates.append({
                             "id": name,
                             "name": template.get("name", name),
-                            "document_type": template.get("document_type", ""),
-                            "vendor": template.get("vendor", "generic"),
                             "description": template.get("description", ""),
+                            "field_count": field_count,
                         })
         return templates
 
     def get_template_tree(self) -> List[Dict[str, Any]]:
-        """Return templates organized as a tree grouped by document_type."""
+        """Return templates as a flat list (no longer grouped by vendor/doc_type)."""
         flat = self.list_templates()
-        groups: Dict[str, Dict[str, Any]] = {}
-
-        doc_type_labels = {
-            "invoice": "发票 (Invoice)",
-            "packing_list": "装箱单 (Packing List)",
-        }
-
-        for t in flat:
-            dt = t.get("document_type", "other")
-            if dt not in groups:
-                groups[dt] = {
-                    "id": f"group_{dt}",
-                    "name": doc_type_labels.get(dt, dt),
-                    "document_type": dt,
-                    "is_group": True,
-                    "children": [],
-                }
-            groups[dt]["children"].append({
-                "id": t["id"],
-                "name": t["name"],
-                "document_type": t["document_type"],
-                "vendor": t["vendor"],
-                "description": t["description"],
-                "is_group": False,
-                "children": [],
-            })
-
-        return list(groups.values())
+        return [{
+            "id": t["id"],
+            "name": t["name"],
+            "description": t["description"],
+            "field_count": t["field_count"],
+            "is_group": False,
+            "children": [],
+        } for t in flat]
 
     def save_template(self, template_id: str, data: Dict[str, Any]) -> bool:
         """Save a template (create or update)."""

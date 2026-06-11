@@ -131,3 +131,73 @@ def delete_agent_session(session_id: str) -> bool:
         return False
     _save_json(AGENT_SESSIONS_FILE, new_sessions)
     return True
+
+
+# ─── Tasks (Background Extraction Jobs) ───────────────────────────
+
+TASKS_FILE = "tasks.json"
+
+def create_task(method: str, template_id: str, input_data: Dict) -> Dict:
+    """Create a new task with status=running. Returns the task object."""
+    tasks = _load_json(TASKS_FILE)
+    now = datetime.now().isoformat()
+    task = {
+        "id": str(uuid.uuid4())[:8],
+        "status": "running",
+        "progress": "",
+        "method": method,
+        "template_id": template_id,
+        "input": input_data,
+        "result": None,
+        "created_at": now,
+        "completed_at": None,
+    }
+    tasks.append(task)
+    _save_json(TASKS_FILE, tasks)
+    return task
+
+def update_task(task_id: str, **kwargs) -> Optional[Dict]:
+    """Update task fields (status, progress, result, completed_at)."""
+    tasks = _load_json(TASKS_FILE)
+    for t in tasks:
+        if t.get("id") == task_id:
+            for k, v in kwargs.items():
+                t[k] = v
+            _save_json(TASKS_FILE, tasks)
+            return t
+    return None
+
+def get_task(task_id: str) -> Optional[Dict]:
+    """Get a specific task by ID."""
+    tasks = _load_json(TASKS_FILE)
+    for t in tasks:
+        if t.get("id") == task_id:
+            return t
+    return None
+
+def list_tasks() -> List[Dict]:
+    """List all tasks, newest first. Returns summaries (without full result)."""
+    tasks = _load_json(TASKS_FILE)
+    tasks.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    summaries = []
+    for t in tasks:
+        summaries.append({
+            "id": t["id"],
+            "status": t.get("status", "running"),
+            "progress": t.get("progress", ""),
+            "method": t.get("method", ""),
+            "template_id": t.get("template_id", ""),
+            "input": t.get("input", {}),
+            "created_at": t.get("created_at"),
+            "completed_at": t.get("completed_at"),
+        })
+    return summaries
+
+def delete_task(task_id: str) -> bool:
+    """Delete a task."""
+    tasks = _load_json(TASKS_FILE)
+    new_tasks = [t for t in tasks if t.get("id") != task_id]
+    if len(new_tasks) == len(tasks):
+        return False
+    _save_json(TASKS_FILE, new_tasks)
+    return True

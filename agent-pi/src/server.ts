@@ -3,7 +3,7 @@
  * Bridges the pi agent to the Vue frontend via HTTP/SSE.
  */
 import express from "express";
-import { createAgent, getSkills, formatSkillForPrompt } from "./agent.js";
+import { createAgent } from "./agent.js";
 import * as reviews from "./review.js";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
@@ -169,10 +169,10 @@ app.delete("/api/agent/sessions/:id", (req, res) => {
   res.json({ success: true });
 });
 
-// ─── Extraction (SSE) ────────────────────────────────────────────
+// ─── Folder Extraction (SSE) ────────────────────────────────────────────
 
-app.post("/api/agent/extract", async (req, res) => {
-  const { file_path, method = "mineru", document_type = "invoice", vendor = "generic" } = req.body;
+app.post("/api/agent/extract-folder", async (req, res) => {
+  const { folder_path, method = "agent", template_id = "customs_declaration", task_id: existingTaskId } = req.body;
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -180,13 +180,267 @@ app.post("/api/agent/extract", async (req, res) => {
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+
+  // Track client connection state for graceful disconnect handling
+  let clientConnected = true;
+  req.on("close", () => { clientConnected = false; });
+
   const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (!clientConnected || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {}
+  };
+
+  // Use existing task (created by frontend) or create one as fallback
+  let taskId = existingTaskId || "";
+  if (!taskId) {
+    try {
+      const taskResp = await fetch(`${BACKEND_URL}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          method: "agent",
+          template_id,
+          input: { folder_path, filename: `[资料集] ${folder_path.split("/").pop()}` },
+        }),
+      });
+      if (taskResp.ok) {
+        const taskData = await taskResp.json();
+        taskId = taskData.task?.id || "";
+      } else {
+        console.error(`[extract-folder] Task creation failed: ${taskResp.status}`);
+      }
+    } catch (e) {
+      console.error("[extract-folder] Task creation error:", e);
+    }
+  }
+
+  const updateTask = async (fields: Record<string, unknown>) => {
+    if (!taskId) return;
+    try {
+      await fetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+    } catch {}
   };
 
   try {
-    // Step 1: Parse document via Python backend
-    send("status", { message: "正在解析文档..." });
+    // Step 1: Parse all documents in the folder via Python backend
+    send("status", { message: "正在解析文件夹中所有文档..." });
+    await updateTask({ progress: "正在解析文件夹中所有文档..." });
+
+    const parseResp = await fetch(`${BACKEND_URL}/api/extract/folder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ folder_path }),
+    });
+    const parseData = await parseResp.json();
+
+    if (parseData.status !== "success") {
+      throw new Error("Folder parsing failed");
+    }
+
+    send("status", {
+      message: `已解析 ${parseData.file_count} 个文件，正在综合抽取报关信息...`
+    });
+
+    // Step 2: Fetch template fields dynamically
+    let templateFields: any[] = [];
+    let lineItemFields: any[] = [];
+    let templateName = template_id;
+    let promptTemplate = "";
+    try {
+      const tplResp = await fetch(`${BACKEND_URL}/api/templates/${template_id}/fields`);
+      if (tplResp.ok) {
+        const tplData = await tplResp.json();
+        templateFields = tplData.extraction_fields || [];
+        lineItemFields = tplData.line_item_fields || [];
+        templateName = tplData.name || template_id;
+        promptTemplate = tplData.prompt_template || "";
+      }
+    } catch {}
+
+    // Build dynamic field table for the prompt
+    const fieldTableRows = templateFields.map((f: any) => {
+      return `| ${f.field_no || ''} | ${f.label || f.name} | ${f.data_source || ''} |`;
+    }).join('\n');
+
+    const fieldCount = templateFields.length;
+
+    // Build line-item columns description
+    const lineItemCols = lineItemFields.length > 0
+      ? lineItemFields.map((f: any) => f.label || f.name).join('|')
+      : '序号|产品编号|品名|申报数量|单位|单价|金额|原产国';
+
+    // Step 3: Use pi agent to extract fields from combined content
+    const agent = createAgent({ skipTemplateTool: true });
+
+    const combinedContent = parseData.combined_content || "";
+
+    // Use template's prompt_template if available, otherwise use default
+    let prompt: string;
+    if (promptTemplate) {
+      prompt = promptTemplate
+        .replace(/\{field_count\}/g, String(fieldCount))
+        .replace(/\{field_table\}/g, fieldTableRows)
+        .replace(/\{line_item_cols\}/g, lineItemCols)
+        .replace(/\{content\}/g, combinedContent);
+    } else {
+      prompt = `你是一位专业报关员，请从以下整套报关资料中综合提取报关单所需的${fieldCount}个字段信息。
+
+## 需要提取的${fieldCount}个字段：
+
+| 序号 | 字段 | 数据来源 |
+|------|------|----------|
+${fieldTableRows}
+
+## 输出格式要求：
+1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源）
+2. 再输出「商品明细」表格，列头至少包含：${lineItemCols}
+3. 缺失字段填 null，不得编造
+4. **绝对禁止省略、合并、截断明细行**
+
+## 资料内容如下：
+${combinedContent}`;
+    }
+
+    let fullReply = "";
+    agent.subscribe((event) => {
+      if (event.type === "message_update") {
+        const evt = (event as any).assistantMessageEvent;
+        if (evt?.type === "text_delta" && evt.delta) {
+          fullReply += evt.delta;
+          send("text_delta", { delta: evt.delta });
+        }
+      }
+    });
+
+    await agent.prompt(prompt);
+
+    // Auto-save to review center
+    const folderName = folder_path.split("/").pop() || folder_path;
+    const reviewItem = reviews.createReview({
+      filename: `[资料集] ${folderName}`,
+      file_path: folder_path,
+      document_type: template_id,
+      vendor: "",
+      method,
+      fields: [],
+      line_items: [],
+      markdown: fullReply,
+      source: "folder_extraction",
+    });
+
+    // Save to Python backend history
+    try {
+      const histEntry = {
+        id: reviewItem.id,
+        filename: `[资料集] ${folderName}`,
+        document_type: template_id,
+        vendor: "",
+        method: "folder_extraction",
+        fields: [],
+        line_items: [],
+        markdown: fullReply,
+        field_count: fieldCount,
+        created_at: new Date().toISOString(),
+      };
+      await fetch(`${BACKEND_URL}/api/history/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(histEntry),
+      }).catch(() => {});
+    } catch {}
+
+    send("message_end", { reply: fullReply });
+    send("done", { review_id: reviewItem.id, task_id: taskId });
+
+    // Update task to complete
+    await updateTask({
+      status: "complete",
+      progress: "",
+      result: { markdown: fullReply, fields: [], line_items: [], field_count: fieldCount },
+      completed_at: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    send("error", { message: e.message || String(e) });
+    await updateTask({
+      status: "failed",
+      progress: `失败: ${e.message || String(e)}`,
+      completed_at: new Date().toISOString(),
+    });
+  } finally {
+    if (clientConnected && !res.destroyed) {
+      try { res.end(); } catch {}
+    }
+  }
+});
+
+// ─── Single File Extraction (SSE) ───────────────────────────────────────────────────
+
+app.post("/api/agent/extract", async (req, res) => {
+  const { file_path, method = "agent", document_type = "invoice", vendor = "generic", task_id: existingTaskId } = req.body;
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  // Track client connection state for graceful disconnect handling
+  let clientConnected = true;
+  req.on("close", () => { clientConnected = false; });
+
+  const send = (event: string, data: unknown) => {
+    if (!clientConnected || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {}
+  };
+
+  // Use existing task (created by frontend) or create one as fallback
+  let taskId = existingTaskId || "";
+  if (!taskId) {
+    try {
+      const taskResp = await fetch(`${BACKEND_URL}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          method: "agent",
+          template_id: "auto",
+          input: { file_path, filename: file_path.split("/").pop() },
+        }),
+      });
+      if (taskResp.ok) {
+        const taskData = await taskResp.json();
+        taskId = taskData.task?.id || "";
+      } else {
+        console.error(`[extract] Task creation failed: ${taskResp.status}`);
+      }
+    } catch (e) {
+      console.error("[extract] Task creation error:", e);
+    }
+  }
+
+  const updateTask = async (fields: Record<string, unknown>) => {
+    if (!taskId) return;
+    try {
+      await fetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+    } catch {}
+  };
+
+  try {
+    // Step 1: Parse document via Python backend (XLSX→PDF→MinerU→Markdown)
+    send("status", { message: "正在解析文档（Excel→PDF→MinerU解析）..." });
+    await updateTask({ progress: "正在解析文档..." });
 
     const parseResp = await fetch(`${BACKEND_URL}/api/extract/mineru`, {
       method: "POST",
@@ -195,31 +449,16 @@ app.post("/api/agent/extract", async (req, res) => {
     });
     const parseData = await parseResp.json();
 
-    if (parseData.status === "fallback" || !parseData.extraction?.fields?.length) {
-      send("status", { message: "文档解析完成，正在提取..." });
-    }
+    const isFallback = parseData.status === "fallback";
+    send("status", {
+      message: isFallback
+        ? "MinerU解析超时，使用备用解析，正在提取..."
+        : "文档解析完成，正在根据模板配置提取..."
+    });
 
     // Step 2: Use pi agent + skill to extract and format
     const isExplicit = document_type !== "auto" && vendor !== "generic";
     const agent = createAgent({ skipTemplateTool: isExplicit });
-    const skillsBlock = getSkills().map(formatSkillForPrompt).join("\n\n");
-
-    // For Qwen mode, try native Qwen extraction; fall back to rule-based
-    if (method === "qwen") {
-      try {
-        const qwenResp = await fetch(`${BACKEND_URL}/api/extract/qwen`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ file_path, template_id: "auto", document_type, vendor, mode: "text" }),
-        });
-        if (qwenResp.ok) {
-          const qwenData = await qwenResp.json();
-          if (qwenData.extraction) {
-            parseData.extraction = qwenData.extraction;
-          }
-        }
-      } catch { /* Qwen API unavailable, use rule-based fallback */ }
-    }
 
     const matchingHint = isExplicit
       ? `⚠️ 用户已指定单据类型「${document_type}」、厂商「${vendor}」。直接提取，不要重新识别或调用工具。`
@@ -252,21 +491,14 @@ ${preview}
 
     // Auto-save to review center
     const fileName = file_path.split("/").pop() || file_path;
-    const extFields = (parseData.extraction?.fields || []).map((f: any) => ({
-      name: f.name || "",
-      label: f.label || f.name || "",
-      value: f.value ?? "",
-      confidence: f.confidence || "medium",
-      location: f.location || "",
-    }));
     const reviewItem = reviews.createReview({
       filename: fileName,
       file_path,
       document_type,
       vendor,
       method,
-      fields: extFields,
-      line_items: parseData.extraction?.line_items || [],
+      fields: [],
+      line_items: [],
       markdown: fullReply,
       source: "extraction",
     });
@@ -278,11 +510,11 @@ ${preview}
         filename: fileName,
         document_type,
         vendor,
-        method: method === "qwen" ? "qwen_vision" : "mineru_structured",
-        fields: extFields,
-        line_items: parseData.extraction?.line_items || [],
+        method: "agent",
+        fields: [],
+        line_items: [],
         markdown: fullReply,
-        field_count: extFields.length,
+        field_count: 0,
         created_at: new Date().toISOString(),
       };
       const histUrl = `${BACKEND_URL}/api/history/save`;
@@ -294,15 +526,30 @@ ${preview}
     } catch {}
 
     send("message_end", { reply: fullReply });
-    send("done", { extraction: parseData.extraction, review_id: reviewItem.id });
+    send("done", { review_id: reviewItem.id, task_id: taskId });
+
+    // Update task to complete
+    await updateTask({
+      status: "complete",
+      progress: "",
+      result: { markdown: fullReply, fields: [], line_items: [] },
+      completed_at: new Date().toISOString(),
+    });
   } catch (e: any) {
     send("error", { message: e.message || String(e) });
+    await updateTask({
+      status: "failed",
+      progress: `失败: ${e.message || String(e)}`,
+      completed_at: new Date().toISOString(),
+    });
   } finally {
-    res.end();
+    if (clientConnected && !res.destroyed) {
+      try { res.end(); } catch {}
+    }
   }
 });
 
-// ─── Review Center ─────────────────────────────────────────────────
+// ─── Review Center ─────────────────────────────────────────────────────────
 
 app.get("/api/review/items", (req, res) => {
   const status = req.query.status as string | undefined;

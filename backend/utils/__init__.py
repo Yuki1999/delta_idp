@@ -3,6 +3,7 @@
 import io
 import os
 import base64
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import openpyxl
@@ -204,6 +205,63 @@ def xlsx_to_image_base64(file_path: str) -> str:
             with open(paths[0], "rb") as f:
                 return base64.b64encode(f.read()).decode("utf-8")
         return ""
+
+
+def xlsx_to_pdf(file_path: str, output_path: str = "") -> str:
+    """
+    Convert an XLSX file to PDF using LibreOffice headless.
+    Preserves full layout, formatting, merged cells, fonts, etc.
+    Returns the path to the generated PDF file.
+    """
+    import subprocess
+    import shutil
+
+    abs_path = os.path.abspath(file_path)
+    if not os.path.exists(abs_path):
+        raise FileNotFoundError(f"Source file not found: {abs_path}")
+
+    if not output_path:
+        base = Path(abs_path).stem
+        output_path = os.path.join(tempfile.gettempdir(), f"{base}.pdf")
+
+    # LibreOffice outputs to a directory with the same stem name + .pdf
+    out_dir = tempfile.mkdtemp(prefix="lo_pdf_")
+    try:
+        cmd = [
+            "libreoffice",
+            "--headless",
+            "--calc",
+            "--convert-to", "pdf",
+            "--outdir", out_dir,
+            abs_path,
+        ]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=120
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"LibreOffice conversion failed (code {result.returncode}): "
+                f"{result.stderr or result.stdout}"
+            )
+
+        # Find the generated PDF in output dir
+        generated_name = Path(abs_path).stem + ".pdf"
+        generated_path = os.path.join(out_dir, generated_name)
+        if not os.path.exists(generated_path):
+            # Fallback: look for any .pdf in the output dir
+            pdfs = [f for f in os.listdir(out_dir) if f.endswith(".pdf")]
+            if pdfs:
+                generated_path = os.path.join(out_dir, pdfs[0])
+            else:
+                raise RuntimeError(f"No PDF generated. LibreOffice output: {result.stdout}")
+
+        # Move to the desired output path
+        shutil.move(generated_path, output_path)
+        print(f"[xlsx_to_pdf] LibreOffice converted: {output_path} ({os.path.getsize(output_path)} bytes)")
+        return output_path
+    finally:
+        # Cleanup temp dir
+        shutil.rmtree(out_dir, ignore_errors=True)
 
 
 def extract_key_value_pairs(file_path: str) -> Dict[str, str]:

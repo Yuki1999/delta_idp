@@ -31,8 +31,9 @@ from backend.utils import (
     xlsx_to_plain_text,
     xlsx_to_images,
     xlsx_to_image_base64,
+    xlsx_to_pdf,
 )
-from backend.extractors import TemplateExtractor, RuleBasedExtractor
+from backend.extractors import TemplateExtractor
 from backend.parsers.mineru import MinerUParser
 from backend.parsers.qwen import QwenExtractor
 from backend import storage
@@ -53,7 +54,6 @@ app.add_middleware(
 
 # Initialize components (lazy init for API-dependent ones)
 template_extractor = TemplateExtractor()
-rule_extractor = RuleBasedExtractor()
 mineru_parser = None  # Lazy init
 qwen_extractor = None  # Lazy init
 
@@ -101,6 +101,23 @@ async def get_template(template_id: str):
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return template
+
+
+@app.get("/api/templates/{template_id}/fields")
+async def get_template_fields(template_id: str):
+    """Get just the extraction fields and line-item fields for a template (used by prompt builder)."""
+    template = template_extractor.load_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {
+        "id": template_id,
+        "name": template.get("name", template_id),
+        "extraction_fields": template.get("extraction_fields", []),
+        "line_item_fields": template.get("line_item_fields", []),
+        "system_prompt": template.get("system_prompt", ""),
+        "prompt_template": template.get("prompt_template", ""),
+        "prompt_config": template.get("prompt_config", None),
+    }
 
 
 @app.post("/api/templates")
@@ -157,10 +174,10 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="No file provided")
 
     ext = Path(file.filename).suffix.lower()
-    if ext not in (".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".pdf"):
+    if ext not in (".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".pdf", ".txt", ".csv", ".md"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {ext}. Supported: .xlsx, .xls, .png, .jpg, .pdf",
+            detail=f"Unsupported file type: {ext}. Supported: .xlsx, .xls, .png, .jpg, .pdf, .txt",
         )
 
     # Save file
@@ -196,6 +213,34 @@ async def upload_file(file: UploadFile = File(...)):
     }
 
 
+@app.post("/api/upload-set")
+async def upload_document_set(files: List[UploadFile] = File(...)):
+    """Upload a complete document set (multiple files grouped together)."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    set_id = str(uuid.uuid4())[:8]
+    set_dir = os.path.join(UPLOAD_DIR, f"set_{set_id}")
+    os.makedirs(set_dir, exist_ok=True)
+
+    file_list = []
+    for file in files:
+        if not file.filename:
+            continue
+        file_path = os.path.join(set_dir, file.filename)
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        file_list.append(file.filename)
+
+    return {
+        "set_id": set_id,
+        "folder_path": set_dir,
+        "files": file_list,
+        "file_count": len(file_list),
+    }
+
+
 @app.post("/api/extract/mineru")
 async def extract_with_mineru(
     file_path: str = Form(...),
@@ -204,91 +249,93 @@ async def extract_with_mineru(
     vendor: str = Form("generic"),
 ):
     """
-    Extract key information using MinerU document parsing + template matching.
+    Parse document and return structured content.
 
-    Pipeline:
-    1. Parse XLSX to structured data (no MinerU API call for XLSX - use direct parsing)
-    2. Apply template-based extraction on structured text
-    3. Return extracted fields
+    Pipeline for XLSX:
+    1. Convert XLSX to PDF (fpdf2)
+    2. Send PDF to MinerU for parsing → Markdown
+    3. Return parsed markdown for downstream pi agent extraction
+
+    Pipeline for other formats:
+    1. Send directly to MinerU for parsing → Markdown
+    2. Return parsed markdown
     """
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    # For XLSX files, use direct structured parsing (fast path)
-    # MinerU is primarily for PDF/images; for XLSX we use our own parser
     ext = Path(file_path).suffix.lower()
 
     if ext in (".xlsx", ".xls"):
-        # Direct structured parsing
-        structured_data = parse_xlsx_to_structured_text(file_path)
-        markdown_text = xlsx_to_markdown_table(file_path)
-        plain_text = xlsx_to_plain_text(file_path)
+        # Step 1: Convert XLSX to PDF
+        print(f"[Extract] Converting XLSX to PDF: {file_path}")
+        try:
+            pdf_path = xlsx_to_pdf(file_path)
+            print(f"[Extract] PDF generated: {pdf_path}")
+        except Exception as e:
+            print(f"[Extract] XLSX to PDF conversion failed: {e}")
+            raise HTTPException(status_code=500, detail=f"XLSX to PDF conversion failed: {e}")
 
-        # Also generate images for reference
-        image_base64 = xlsx_to_image_base64(file_path)
+        # Step 2: Send PDF to MinerU for parsing
+        print(f"[Extract] Sending PDF to MinerU for parsing...")
+        result = await get_mineru().parse_and_wait(pdf_path)
 
-        # Apply rule-based extraction on structured grid data
-        rule_result = rule_extractor.extract_from_structured_data(structured_data)
-
-        # Also apply template-based extraction on the markdown text
-        if template_id == "auto":
-            # Auto-select template
-            if document_type == "invoice":
-                template_id = "samsung_invoice" if vendor == "samsung" else "invoice_generic"
-            else:
-                template_id = "samsung_packinglist" if vendor == "samsung" else "packinglist_generic"
-
-        template_result = template_extractor.extract_with_template(markdown_text, template_id)
-
-        # Merge results
-        merged_fields = _merge_extraction_results(
-            rule_result.get("fields", []),
-            template_result.get("fields", []),
-        )
-
-        return {
-            "method": "mineru_structured",
-            "file_info": {
-                "filename": os.path.basename(file_path),
-                "document_type": document_type,
-                "vendor": vendor,
-            },
-            "parsed_content": {
-                "sheets": len(structured_data.get("sheets", [])),
-                "markdown_preview": markdown_text[:2000],
-                "image_base64": image_base64,
-            },
-            "extraction": {
-                "fields": merged_fields,
-                "line_items": template_result.get("line_items", []),
-            },
-            "template_used": template_id,
-            "status": "success",
-        }
+        if result:
+            content = result.get("content", "")
+            print(f"[Extract] MinerU parsing complete, content length: {len(content)}")
+            return {
+                "method": "mineru_structured",
+                "file_info": {
+                    "filename": os.path.basename(file_path),
+                    "document_type": document_type,
+                    "vendor": vendor,
+                },
+                "parsed_content": {
+                    "markdown_preview": content[:8000],
+                    "image_base64": "",
+                },
+                "status": "success",
+            }
+        else:
+            # Fallback: if MinerU fails, use direct parsing
+            print(f"[Extract] MinerU failed, falling back to direct parsing")
+            markdown_text = xlsx_to_markdown_table(file_path)
+            return {
+                "method": "mineru_structured",
+                "file_info": {
+                    "filename": os.path.basename(file_path),
+                    "document_type": document_type,
+                    "vendor": vendor,
+                },
+                "parsed_content": {
+                    "markdown_preview": markdown_text[:8000],
+                    "image_base64": "",
+                },
+                "status": "fallback",
+                "message": "MinerU parsing timed out, using direct parsing fallback.",
+            }
 
     else:
-        # For non-XLSX: use MinerU API to parse, then template extraction
-        # Convert to image first if needed
+        # For non-XLSX: use MinerU API to parse directly
         result = await get_mineru().parse_and_wait(file_path)
         if result:
             content = result.get("content", "")
-            if template_id == "auto":
-                template_id = f"{document_type}_generic"
-            template_result = template_extractor.extract_with_template(content, template_id)
             return {
                 "method": "mineru_api",
-                "extraction": template_result,
-                "template_used": template_id,
+                "parsed_content": {
+                    "markdown_preview": content[:8000],
+                    "image_base64": "",
+                },
                 "status": "success",
             }
         else:
             return {
                 "method": "mineru_api",
                 "status": "fallback",
-                "message": "MinerU parsing timed out. Using rule-based extraction instead.",
-                "extraction": rule_extractor.extract_from_structured_data(
-                    parse_xlsx_to_structured_text(file_path)
-                ),
+                "message": "MinerU parsing timed out.",
+                "parsed_content": {
+                    "markdown_preview": "",
+                    "image_base64": "",
+                },
             }
 
 
@@ -301,71 +348,46 @@ async def extract_with_qwen(
     mode: str = Form("vision"),  # "vision" or "text"
 ):
     """
-    Extract key information using Qwen3.6-27B end-to-end.
+    Parse document and return structured content for Qwen extraction.
 
-    Two modes:
-    - vision: Send document image directly to Qwen vision model
-    - text: Send Minerva-parsed text to Qwen for extraction
+    Extraction is handled by the agent-pi service using qwen3.6-27b multimodal model.
+    This endpoint provides the parsed document content.
     """
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    if template_id == "auto":
-        if document_type == "invoice":
-            template_id = "samsung_invoice" if vendor == "samsung" else "invoice_generic"
-        else:
-            template_id = "samsung_packinglist" if vendor == "samsung" else "packinglist_generic"
+    ext = Path(file_path).suffix.lower()
 
-    template = template_extractor.load_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
-
-    extraction_fields = template.get("extraction_fields", [])
-
-    image_base64 = ""
-    if mode == "vision":
-        # Vision mode: send image to Qwen
+    if ext in (".xlsx", ".xls"):
+        markdown_text = xlsx_to_markdown_table(file_path)
+        plain_text = xlsx_to_plain_text(file_path)
         image_base64 = xlsx_to_image_base64(file_path)
-        if not image_base64:
-            # Fallback: send structured text
-            mode = "text"
 
-    if mode == "text" or not image_base64:
-        # Text mode: parse first, then send to Qwen
-        parsed_text = xlsx_to_plain_text(file_path)
-        result = get_qwen().extract_from_text(
-            text=parsed_text,
-            extraction_fields=extraction_fields,
-            document_type=document_type,
-        )
+        return {
+            "method": f"qwen_{mode}",
+            "file_info": {
+                "filename": os.path.basename(file_path),
+                "document_type": document_type,
+                "vendor": vendor,
+            },
+            "parsed_content": {
+                "markdown_preview": markdown_text[:8000],
+                "plain_text": plain_text[:8000],
+                "image_base64": image_base64,
+            },
+            "status": "success",
+        }
     else:
-        # Vision mode
-        result = get_qwen().extract_from_image(
-            image_base64=image_base64,
-            prompt=f"请从这份{document_type}单据中提取所有关键信息。",
-            extraction_fields=extraction_fields,
-            document_type=document_type,
-        )
-
-    # Also get rule-based result for comparison
-    structured_data = parse_xlsx_to_structured_text(file_path)
-    rule_result = rule_extractor.extract_from_structured_data(structured_data)
-
-    return {
-        "method": f"qwen_{mode}",
-        "file_info": {
-            "filename": os.path.basename(file_path),
-            "document_type": document_type,
-            "vendor": vendor,
-        },
-        "qwen_extraction": result,
-        "rule_extraction": {
-            "fields": rule_result.get("fields", []),
-            "line_items": rule_result.get("line_items", []),
-        },
-        "template_used": template_id,
-        "status": "success",
-    }
+        result = await get_mineru().parse_and_wait(file_path)
+        content = result.get("content", "") if result else ""
+        return {
+            "method": f"qwen_{mode}",
+            "parsed_content": {
+                "markdown_preview": content[:8000],
+                "image_base64": "",
+            },
+            "status": "success" if result else "fallback",
+        }
 
 
 @app.post("/api/extract/hybrid")
@@ -376,102 +398,48 @@ async def extract_hybrid(
     vendor: str = Form("generic"),
 ):
     """
-    Hybrid extraction: Combine MinerU structured parsing + Qwen LLM extraction.
+    Parse document and return structured content.
 
-    This is the recommended approach:
-    1. Structured parsing extracts what it can with high confidence
-    2. Qwen fills in gaps and validates
+    Extraction is handled by the agent-pi service using qwen3.6-27b multimodal model.
+    This endpoint provides the parsed document content.
     """
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    if template_id == "auto":
-        if document_type == "invoice":
-            template_id = "samsung_invoice" if vendor == "samsung" else "invoice_generic"
-        else:
-            template_id = "samsung_packinglist" if vendor == "samsung" else "packinglist_generic"
+    ext = Path(file_path).suffix.lower()
 
-    template = template_extractor.load_template(template_id)
+    if ext in (".xlsx", ".xls"):
+        structured_data = parse_xlsx_to_structured_text(file_path)
+        markdown_text = xlsx_to_markdown_table(file_path)
+        plain_text = xlsx_to_plain_text(file_path)
+        image_base64 = xlsx_to_image_base64(file_path)
 
-    # Step 1: Structured parsing
-    structured_data = parse_xlsx_to_structured_text(file_path)
-    rule_result = rule_extractor.extract_from_structured_data(structured_data)
-
-    # Step 2: Markdown text for template extraction
-    markdown_text = xlsx_to_markdown_table(file_path)
-    template_result = template_extractor.extract_with_template(markdown_text, template_id)
-
-    # Step 3: Merge structured + template results
-    merged_fields = _merge_extraction_results(
-        rule_result.get("fields", []),
-        template_result.get("fields", []),
-    )
-
-    # Step 4: Optional Qwen validation on low-confidence fields
-    low_conf = [f for f in merged_fields if f.get("confidence") == "low"]
-    qwen_result = None
-
-    if low_conf:
-        try:
-            plain_text = xlsx_to_plain_text(file_path)
-            low_conf_fields_desc = [
-                {"name": f["name"], "label": f["label"], "description": f.get("value", "")}
-                for f in low_conf
-            ]
-            if template:
-                extraction_fields = template.get("extraction_fields", [])
-                low_conf_fields_desc = [
-                    f for f in extraction_fields
-                    if f["name"] in [lc["name"] for lc in low_conf]
-                ]
-            if low_conf_fields_desc:
-                qwen_result = get_qwen().extract_from_text(
-                    text=plain_text,
-                    extraction_fields=low_conf_fields_desc,
-                    document_type=document_type,
-                )
-        except Exception as e:
-            print(f"[Hybrid] Qwen validation failed: {e}")
-
-    # Merge Qwen results if available
-    if qwen_result and qwen_result.get("fields"):
-        merged_fields = _merge_extraction_results(
-            merged_fields, qwen_result["fields"], prefer_second=True
-        )
-
-    response = {
-        "method": "hybrid",
-        "file_info": {
-            "filename": os.path.basename(file_path),
-            "document_type": document_type,
-            "vendor": vendor,
-        },
-        "extraction": {
-            "fields": merged_fields,
-            "line_items": template_result.get("line_items", []),
-        },
-        "template_used": template_id,
-        "qwen_validated_fields": [f["name"] for f in low_conf] if low_conf else [],
-        "status": "success",
-    }
-    _save_to_history(response, file_path, template_id)
-    return response
-
-
-def _save_to_history(result: Dict[str, Any], file_path: str, template_id: str):
-    """Persist extraction result to history."""
-    try:
-        storage.save_extraction_history({
-            "filename": os.path.basename(file_path),
-            "document_type": result.get("extraction", {}).get("document_type", ""),
-            "method": result.get("method", ""),
-            "template_used": template_id,
-            "fields": result.get("extraction", {}).get("fields", []),
-            "line_items": result.get("extraction", {}).get("line_items", []),
-            "field_count": len(result.get("extraction", {}).get("fields", [])),
-        })
-    except Exception as e:
-        print(f"[History] Failed to save: {e}")
+        return {
+            "method": "hybrid",
+            "file_info": {
+                "filename": os.path.basename(file_path),
+                "document_type": document_type,
+                "vendor": vendor,
+            },
+            "parsed_content": {
+                "sheets": len(structured_data.get("sheets", [])),
+                "markdown_preview": markdown_text[:8000],
+                "plain_text": plain_text[:8000],
+                "image_base64": image_base64,
+            },
+            "status": "success",
+        }
+    else:
+        result = await get_mineru().parse_and_wait(file_path)
+        content = result.get("content", "") if result else ""
+        return {
+            "method": "hybrid",
+            "parsed_content": {
+                "markdown_preview": content[:8000],
+                "image_base64": "",
+            },
+            "status": "success" if result else "fallback",
+        }
 
 
 @app.post("/api/extract/batch")
@@ -514,6 +482,321 @@ async def extract_batch(
             results.append({"file": os.path.basename(fp), "error": str(e)})
 
     return {"batch_results": results, "method": method}
+
+
+# ─── Tasks API (Background Extraction Jobs) ─────────────────────────────────
+
+@app.post("/api/tasks")
+async def create_task_endpoint(data: Dict[str, Any]):
+    """Create a background extraction task and start it."""
+    method = data.get("method", "standard")
+    template_id = data.get("template_id", "customs_declaration")
+    input_data = data.get("input", {})
+
+    task = storage.create_task(method=method, template_id=template_id, input_data=input_data)
+    task_id = task["id"]
+
+    if method == "standard":
+        import asyncio
+        asyncio.create_task(_run_standard_pipeline(task_id, template_id, input_data))
+    # For agent mode, the agent-pi server handles execution and updates this task
+
+    return {"task": task}
+
+
+@app.get("/api/tasks")
+async def list_tasks_endpoint():
+    """List all tasks (summaries)."""
+    return {"tasks": storage.list_tasks()}
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task_endpoint(task_id: str):
+    """Get full task details including result."""
+    task = storage.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+@app.put("/api/tasks/{task_id}")
+async def update_task_endpoint(task_id: str, data: Dict[str, Any]):
+    """Update task status/progress/result (used by agent-pi)."""
+    task = storage.update_task(task_id, **data)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task_endpoint(task_id: str):
+    """Delete a task."""
+    success = storage.delete_task(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "deleted"}
+
+
+def build_prompt_from_config(
+    prompt_config: Dict,
+    extraction_fields: List[Dict],
+    line_item_fields: List[Dict],
+    combined_content: str,
+) -> tuple:
+    """
+    Assemble a (system_prompt, user_prompt) tuple from a structured prompt_config.
+    Returns (system_prompt: str, user_prompt: str).
+    """
+    role = prompt_config.get("role", "专业报关员")
+    doc_types = prompt_config.get("doc_types", "")
+    rules = prompt_config.get("rules", [])
+    fmt = prompt_config.get("format", {})
+    additional_notes = prompt_config.get("additional_notes", "")
+
+    field_count = len(extraction_fields)
+    line_item_cols = "|".join(
+        [f.get("label", f.get("name", "")) for f in line_item_fields]
+    ) if line_item_fields else "序号|产品编号|品名|申报数量|单位|单价|金额|原产国"
+
+    field_table_rows = "\n".join([
+        f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} |"
+        for f in extraction_fields
+    ])
+
+    # --- system prompt ---
+    sys_prompt = f"你是一位{role}，擅长从国际物流单据中提取结构化信息。"
+
+    # --- user prompt ---
+    parts = []
+    parts.append(f"你是一位{role}，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。")
+
+    if doc_types:
+        parts.append(f"\n这套资料包含：{doc_types}。")
+        parts.append("请交叉引用所有文件内容，准确填写每个字段。")
+
+    # Field table
+    parts.append(f"\n## 需要提取的{field_count}个字段：\n")
+    parts.append("| 序号 | 字段 | 数据来源 |")
+    parts.append("|------|------|----------|")
+    parts.append(field_table_rows)
+
+    # Enabled rules
+    enabled_rules = [r for r in rules if r.get("enabled", True)]
+    if enabled_rules:
+        parts.append("\n## 抽取规则：\n")
+        for i, r in enumerate(enabled_rules, 1):
+            parts.append(f"{i}. {r['label']}")
+
+    # Output format
+    parts.append("\n## 输出格式要求：\n")
+    parts.append("1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源），字段\"产品编号\"的值填\"见商品明细\"")
+    parts.append(f"2. 再输出「商品明细」表格，列头保留发票中的所有属性列，至少包含：{line_item_cols}")
+
+    weight_dec = fmt.get("weight_decimals", 3)
+    volume_dec = fmt.get("volume_decimals", 4)
+    amount_dec = fmt.get("amount_decimals", 2)
+    parts.append(f"3. 重量保留{weight_dec}位小数，体积保留{volume_dec}位小数，金额保留{amount_dec}位小数")
+    parts.append("4. **绝对禁止省略、合并、截断明细行或使用\"...\"代替**")
+
+    # Additional notes
+    if additional_notes:
+        parts.append(f"\n## 附加说明：\n{additional_notes}")
+
+    # Content
+    parts.append(f"\n## 整套报关资料内容如下：\n{combined_content}")
+
+    return sys_prompt, "\n".join(parts)
+
+
+async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dict):
+    """
+    Standard mode pipeline (runs in background):
+    1. Excel -> PDF (skip if already PDF)
+    2. PDF -> MinerU -> Markdown
+    3. Concat all files
+    4. Build prompt from template fields
+    5. Call Qwen3.6 directly
+    6. Save result
+    """
+    try:
+        folder_path = input_data.get("folder_path", "")
+        file_path = input_data.get("file_path", "")
+
+        # Determine files to process
+        files_to_process = []
+        if folder_path and os.path.isdir(folder_path):
+            for f in sorted(Path(folder_path).iterdir()):
+                if f.is_file():
+                    files_to_process.append(str(f))
+        elif file_path and os.path.exists(file_path):
+            files_to_process.append(file_path)
+        else:
+            storage.update_task(task_id, status="failed", progress="No valid input files")
+            return
+
+        total_files = len(files_to_process)
+        combined_sections = []
+
+        # Step 1+2: Convert and parse each file
+        for idx, fp in enumerate(files_to_process, 1):
+            filename = os.path.basename(fp)
+            ext = Path(fp).suffix.lower()
+
+            storage.update_task(task_id, progress=f"正在解析文件 {idx}/{total_files}: {filename}")
+
+            section_header = f"\n\n## 文件：{filename}\n\n"
+
+            if ext in (".xlsx", ".xls"):
+                # Excel -> PDF -> MinerU
+                try:
+                    pdf_path = xlsx_to_pdf(fp)
+                    result = await get_mineru().parse_and_wait(pdf_path)
+                    if result:
+                        content = result.get("content", "")
+                        combined_sections.append(section_header + content)
+                    else:
+                        markdown_text = xlsx_to_markdown_table(fp)
+                        combined_sections.append(section_header + markdown_text)
+                except Exception as e:
+                    try:
+                        markdown_text = xlsx_to_markdown_table(fp)
+                        combined_sections.append(section_header + markdown_text)
+                    except Exception:
+                        combined_sections.append(section_header + f"[解析失败: {e}]")
+
+            elif ext in (".pdf",):
+                # PDF -> MinerU directly
+                try:
+                    result = await get_mineru().parse_and_wait(fp)
+                    if result:
+                        content = result.get("content", "")
+                        combined_sections.append(section_header + content)
+                    else:
+                        combined_sections.append(section_header + "[MinerU解析超时]")
+                except Exception as e:
+                    combined_sections.append(section_header + f"[解析失败: {e}]")
+
+            elif ext in (".txt", ".md"):
+                try:
+                    text_content = open(fp, encoding="utf-8").read()
+                except UnicodeDecodeError:
+                    text_content = open(fp, encoding="gbk", errors="replace").read()
+                combined_sections.append(section_header + text_content)
+            else:
+                combined_sections.append(section_header + "[不支持的文件格式]")
+
+        # Step 3: Concat
+        storage.update_task(task_id, progress="正在拼接文档内容...")
+        combined_content = "\n".join(combined_sections)
+
+        # Step 4: Build prompt from template
+        storage.update_task(task_id, progress="正在构建抽取提示...")
+        template = template_extractor.load_template(template_id)
+        if not template:
+            template = template_extractor.load_template("customs_declaration")
+
+        extraction_fields = template.get("extraction_fields", []) if template else []
+        line_item_fields = template.get("line_item_fields", []) if template else []
+        template_name = template.get("name", template_id) if template else template_id
+        field_count = len(extraction_fields)
+
+        # Priority: prompt_config > prompt_template > hardcoded default
+        prompt_config = template.get("prompt_config") if template else None
+        if prompt_config:
+            system_prompt, prompt = build_prompt_from_config(
+                prompt_config, extraction_fields, line_item_fields, combined_content
+            )
+        else:
+            field_table_rows = "\n".join([
+                f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} |"
+                for f in extraction_fields
+            ])
+            line_item_cols = "|".join([f.get("label", f.get("name", "")) for f in line_item_fields]) if line_item_fields else "序号|产品编号|品名|申报数量|单位|单价|金额|原产国"
+
+            prompt_tpl = template.get("prompt_template", "") if template else ""
+            if prompt_tpl:
+                prompt = prompt_tpl.replace("{field_count}", str(field_count))
+                prompt = prompt.replace("{field_table}", field_table_rows)
+                prompt = prompt.replace("{line_item_cols}", line_item_cols)
+                prompt = prompt.replace("{content}", combined_content)
+            else:
+                prompt = f"""你是一位专业报关员，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。
+
+## 需要提取的{field_count}个字段：
+
+| 序号 | 字段 | 数据来源 |
+|------|------|----------|
+{field_table_rows}
+
+## 输出格式要求：
+1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源）
+2. 再输出「商品明细」表格，列头至少包含：{line_item_cols}
+3. 缺失字段填 null，不得编造
+4. **绝对禁止省略、合并、截断明细行**
+
+## 资料内容如下：
+{combined_content}"""
+
+            system_prompt = (template.get("system_prompt", "") if template else "") or "你是一位专业报关员，擅长从国际物流单据中提取结构化信息。"
+
+        # Step 5: Call Qwen directly
+        storage.update_task(task_id, progress="正在调用 Qwen 抽取字段...")
+
+        qwen = get_qwen()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        response = qwen.client.chat.completions.create(
+            model=qwen.model,
+            messages=messages,
+            max_tokens=8192,
+            temperature=0.1,
+        )
+        reply = response.choices[0].message.content.strip()
+
+        # Step 6: Save result
+        result_data = {
+            "markdown": reply,
+            "fields": [],
+            "line_items": [],
+            "field_count": field_count,
+        }
+        storage.update_task(
+            task_id,
+            status="complete",
+            progress="",
+            result=result_data,
+            completed_at=datetime.now().isoformat(),
+        )
+
+        # Also save to extraction history for backward compat
+        input_name = input_data.get("filename", "")
+        if not input_name and folder_path:
+            input_name = f"[资料集] {os.path.basename(folder_path)}"
+        elif not input_name and file_path:
+            input_name = os.path.basename(file_path)
+
+        storage.save_extraction_history({
+            "id": task_id,
+            "filename": input_name,
+            "document_type": template_id,
+            "vendor": "",
+            "method": "standard",
+            "fields": [],
+            "line_items": [],
+            "markdown": reply,
+            "field_count": field_count,
+        })
+
+    except Exception as e:
+        storage.update_task(
+            task_id,
+            status="failed",
+            progress=f"失败: {str(e)}",
+            completed_at=datetime.now().isoformat(),
+        )
 
 
 # ─── Extraction History API ──────────────────────────────────────────────────
@@ -712,6 +995,108 @@ async def agent_extract(
     return result
 
 
+# ─── Document Preview & Serve ─────────────────────────────────────────────────
+
+def _resolve_upload_path(filename: str) -> str:
+    """Resolve filename to actual file path in uploads or project root."""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return file_path
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    file_path = os.path.join(project_root, filename)
+    if os.path.exists(file_path):
+        return file_path
+    return ""
+
+
+@app.get("/api/document/serve/{filename:path}")
+async def serve_document(filename: str):
+    """Serve the raw uploaded file for iframe/image embedding (inline, not download)."""
+    file_path = _resolve_upload_path(filename)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Determine media type for inline display
+    ext = Path(file_path).suffix.lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+
+    # Use headers to force inline display (not download)
+    headers = {"Content-Disposition": "inline"}
+    return FileResponse(file_path, media_type=media_type, headers=headers)
+
+
+@app.get("/api/document/preview")
+async def document_preview(filename: str):
+    """
+    Return document preview data.
+    - For XLSX: returns structured cell data for spreadsheet rendering.
+    - For PDF/images: returns file_type and serve URL.
+    """
+    file_path = _resolve_upload_path(filename)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = Path(file_path).suffix.lower()
+    base_filename = os.path.basename(file_path)
+    serve_url = f"/api/document/serve/{base_filename}"
+
+    # For PDF and images, just return file_type and URL
+    if ext in (".pdf",):
+        return {
+            "filename": base_filename,
+            "file_type": "pdf",
+            "serve_url": serve_url,
+        }
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+        return {
+            "filename": base_filename,
+            "file_type": "image",
+            "serve_url": serve_url,
+        }
+
+    # For XLSX: convert to PDF and show PDF preview
+    if ext in (".xlsx", ".xls"):
+        # Generate PDF preview (cached in uploads dir)
+        pdf_name = Path(base_filename).stem + "_preview.pdf"
+        pdf_path = os.path.join(UPLOAD_DIR, pdf_name)
+        if not os.path.exists(pdf_path):
+            try:
+                xlsx_to_pdf(file_path, output_path=pdf_path)
+                print(f"[Preview] Generated PDF preview: {pdf_path}")
+            except Exception as e:
+                print(f"[Preview] PDF conversion failed: {e}")
+                raise HTTPException(status_code=500, detail=f"PDF preview generation failed: {e}")
+        pdf_serve_url = f"/api/document/serve/{pdf_name}"
+        return {
+            "filename": base_filename,
+            "file_type": "pdf",
+            "serve_url": pdf_serve_url,
+        }
+
+    # For text files: return content directly
+    if ext in (".txt", ".csv", ".md"):
+        try:
+            text_content = open(file_path, encoding="utf-8").read()
+        except UnicodeDecodeError:
+            text_content = open(file_path, encoding="gbk", errors="replace").read()
+        return {
+            "filename": base_filename,
+            "file_type": "text",
+            "content": text_content,
+        }
+
+    raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
+
 # ─── Sample Files ────────────────────────────────────────────────────────────
 
 @app.get("/api/samples/{filename}")
@@ -750,6 +1135,109 @@ async def get_file(file_id: str):
     raise HTTPException(status_code=404, detail="File not found")
 
 
+# ─── Sample Document Sets ─────────────────────────────────────────────────────
+
+SAMPLES_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "samples"
+
+
+@app.get("/api/samples")
+async def list_samples():
+    """List sample document set folders and their files."""
+    if not SAMPLES_DIR.exists():
+        return {"folders": []}
+    folders = []
+    for folder in sorted(SAMPLES_DIR.iterdir()):
+        if folder.is_dir():
+            files = [f.name for f in sorted(folder.iterdir()) if f.is_file()]
+            folders.append({
+                "name": folder.name,
+                "path": str(folder.resolve()),
+                "files": files,
+            })
+    return {"folders": folders}
+
+
+@app.post("/api/extract/folder")
+async def extract_folder(folder_path: str = Form(...)):
+    """
+    Parse all documents in a folder and return combined content.
+    For XLSX: convert to PDF then MinerU parse (or fallback to direct markdown).
+    For TXT: read directly.
+    Returns concatenated markdown with section headers per file.
+    """
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    combined_sections = []
+    files = sorted(folder.iterdir())
+
+    for file_item in files:
+        if not file_item.is_file():
+            continue
+
+        ext = file_item.suffix.lower()
+        section_header = f"\n\n## 文件：{file_item.name}\n\n"
+
+        if ext in (".txt",):
+            # Read text files directly
+            try:
+                text_content = file_item.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text_content = file_item.read_text(encoding="gbk", errors="replace")
+            combined_sections.append(section_header + text_content)
+
+        elif ext in (".xlsx", ".xls"):
+            # Convert XLSX to PDF then MinerU, or fallback
+            file_path_str = str(file_item)
+            try:
+                pdf_path = xlsx_to_pdf(file_path_str)
+                result = await get_mineru().parse_and_wait(pdf_path)
+                if result:
+                    content = result.get("content", "")
+                    combined_sections.append(section_header + content)
+                else:
+                    # Fallback to direct markdown
+                    markdown_text = xlsx_to_markdown_table(file_path_str)
+                    combined_sections.append(section_header + markdown_text)
+            except Exception as e:
+                # Fallback to direct markdown
+                try:
+                    markdown_text = xlsx_to_markdown_table(file_path_str)
+                    combined_sections.append(section_header + markdown_text)
+                except Exception:
+                    combined_sections.append(section_header + f"[解析失败: {e}]")
+
+        elif ext in (".pdf",):
+            # Send PDF directly to MinerU
+            try:
+                result = await get_mineru().parse_and_wait(str(file_item))
+                if result:
+                    content = result.get("content", "")
+                    combined_sections.append(section_header + content)
+                else:
+                    combined_sections.append(section_header + "[MinerU解析超时]")
+            except Exception as e:
+                combined_sections.append(section_header + f"[解析失败: {e}]")
+
+        else:
+            # Try to read as text
+            try:
+                text_content = file_item.read_text(encoding="utf-8")
+                combined_sections.append(section_header + text_content)
+            except Exception:
+                combined_sections.append(section_header + "[不支持的文件格式]")
+
+    combined_content = "\n".join(combined_sections)
+
+    return {
+        "folder_name": folder.name,
+        "file_count": len([f for f in files if f.is_file()]),
+        "combined_content": combined_content,
+        "status": "success",
+    }
+
+
 # ─── Frontend Serving ────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -784,32 +1272,6 @@ async def serve_js(filename: str):
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _merge_extraction_results(
-    fields1: List[Dict[str, Any]],
-    fields2: List[Dict[str, Any]],
-    prefer_second: bool = False,
-) -> List[Dict[str, Any]]:
-    """Merge two extraction result field lists, deduplicating by name."""
-    merged = {}
-    for f in fields1:
-        name = f.get("name", "")
-        if name:
-            merged[name] = f
-
-    for f in fields2:
-        name = f.get("name", "")
-        if name:
-            if name in merged:
-                if prefer_second and f.get("value"):
-                    merged[name] = f
-                elif not merged[name].get("value") and f.get("value"):
-                    merged[name] = f
-                elif f.get("confidence") == "high" and merged[name].get("confidence") != "high":
-                    merged[name] = f
-            else:
-                merged[name] = f
-
-    return list(merged.values())
 
 
 # ─── Startup ─────────────────────────────────────────────────────────────────

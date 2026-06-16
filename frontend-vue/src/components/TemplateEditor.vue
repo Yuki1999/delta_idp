@@ -34,11 +34,13 @@
           <div class="field-header">
             <span>标签</span>
             <span>数据来源</span>
+            <span>来源中原文表述</span>
             <span></span>
           </div>
           <div v-for="(f, i) in extractFields" :key="i" class="field-row">
             <input v-model="f.label" class="sm-input" placeholder="字段标签" />
             <input v-model="f.data_source" class="sm-input" placeholder="数据来源说明" />
+            <input v-model="f.source_original_text" class="sm-input" placeholder="来源中的原文表述" />
             <div class="act-col">
               <button class="btn-icon danger" @click="extractFields.splice(i, 1)" title="删除">&times;</button>
             </div>
@@ -134,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, reactive } from 'vue'
+import { ref, watch, computed } from 'vue'
 
 const props = defineProps({ template: Object, isNew: Boolean, isSaving: Boolean })
 const emit = defineEmits(['save', 'cancel'])
@@ -157,6 +159,7 @@ watch(() => props.template, (t) => {
     const fields = (t.extraction_fields || []).map(f => ({
       label: f.label || '',
       data_source: f.data_source || '',
+      source_original_text: f.source_original_text || '',
       _orig_name: f.name || '',
     }))
     const hasLineItems = (t.line_item_fields && t.line_item_fields.length > 0) || false
@@ -189,7 +192,7 @@ const extractFields = computed({
 })
 
 function addField() {
-  extractFields.value.push({ label: '', data_source: '', _orig_name: '' })
+  extractFields.value.push({ label: '', data_source: '', source_original_text: '', _orig_name: '' })
 }
 
 function addRule() {
@@ -231,10 +234,10 @@ const generatedPromptPreview = computed(() => {
   }
 
   parts.push(`\n## 需要提取的${fieldCount}个字段：\n`)
-  parts.push('| 序号 | 字段 | 数据来源 |')
-  parts.push('|------|------|----------|')
+  parts.push('| 序号 | 字段 | 数据来源 | 来源中原文表述 |')
+  parts.push('|------|------|----------|----------------|')
   fields.forEach((f, i) => {
-    parts.push(`| ${i + 1} | ${f.label || ''} | ${f.data_source || ''} |`)
+    parts.push(`| ${i + 1} | ${f.label || ''} | ${f.data_source || ''} | ${f.source_original_text || ''} |`)
   })
 
   const enabled = cfg.rules.filter(r => r.enabled)
@@ -244,7 +247,7 @@ const generatedPromptPreview = computed(() => {
   }
 
   parts.push('\n## 输出格式要求：\n')
-  parts.push('1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源）')
+  parts.push('1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述）')
   parts.push('2. 再输出「商品明细」表格')
   parts.push(`3. 重量保留${cfg.format.weight_decimals}位小数，体积保留${cfg.format.volume_decimals}位小数，金额保留${cfg.format.amount_decimals}位小数`)
   parts.push('4. **绝对禁止省略、合并、截断明细行**')
@@ -277,6 +280,7 @@ function save() {
       field_no: i + 1,
       description: '',
       data_source: f.data_source || '',
+      source_original_text: f.source_original_text || '',
       data_type: 'string',
     })),
     line_item_fields: form.value.enable_line_items
@@ -310,8 +314,8 @@ function save() {
 .sm-input:focus { outline: none; border-color: var(--c-primary); }
 
 .field-list { display: flex; flex-direction: column; gap: 4px; }
-.field-header { display: grid; grid-template-columns: 1fr 1fr 32px; gap: 6px; padding: 4px 0; font-size: 11px; font-weight: 600; color: var(--c-gray-500); }
-.field-row { display: grid; grid-template-columns: 1fr 1fr 32px; gap: 6px; align-items: center; }
+.field-header { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 6px; padding: 4px 0; font-size: 11px; font-weight: 600; color: var(--c-gray-500); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 6px; align-items: center; }
 .act-col { display: flex; gap: 2px; }
 .btn-icon { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--c-gray-400); padding: 2px 4px; border-radius: 3px; transition: all .1s; }
 .btn-icon:hover { background: var(--c-gray-100); color: var(--c-gray-700); }

@@ -15,27 +15,6 @@
         </div>
       </section>
 
-      <section class="panel">
-        <h2 class="panel-title">⚙️ 抽取配置</h2>
-        <div class="form-g">
-          <label>抽取模板</label>
-          <select v-model="store.templateId" class="select">
-            <option v-for="t in store.templates" :key="t.id" :value="t.id">{{ t.name }} ({{ t.field_count || 0 }}个字段)</option>
-          </select>
-        </div>
-        <div class="form-g">
-          <label>技术路径</label>
-          <label v-for="m in methods" :key="m.value" class="radio-item">
-            <input type="radio" :value="m.value" v-model="store.method" />
-            <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
-          </label>
-        </div>
-        <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
-          🔍 {{ extractBtnText }}
-        </button>
-        <StatusBadge :message="store.statusMsg" :type="store.statusType" />
-      </section>
-
       <section class="panel collapsible-panel">
         <h2 class="panel-title clickable" @click="samplePanelOpen = !samplePanelOpen">
           📋 示例资料
@@ -60,6 +39,27 @@
       </section>
 
       <section class="panel">
+        <h2 class="panel-title">⚙️ 抽取配置</h2>
+        <div class="form-g">
+          <label>抽取模板</label>
+          <select v-model="store.templateId" class="select">
+            <option v-for="t in store.templates" :key="t.id" :value="t.id">{{ t.name }} ({{ t.field_count || 0 }}个字段)</option>
+          </select>
+        </div>
+        <div class="form-g">
+          <label>技术路径</label>
+          <label v-for="m in methods" :key="m.value" class="radio-item">
+            <input type="radio" :value="m.value" v-model="store.method" />
+            <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
+          </label>
+        </div>
+        <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
+          🔍 {{ extractBtnText }}
+        </button>
+        <StatusBadge :message="store.statusMsg" :type="store.statusType" />
+      </section>
+
+      <section class="panel">
         <h2 class="panel-title">📜 抽取任务</h2>
         <!-- Running tasks -->
         <template v-if="store.tasks.length">
@@ -74,6 +74,7 @@
               <span>{{ fmtTime(t.created_at) }}</span>
             </div>
             <span v-if="t.status === 'running'" class="task-spinner"></span>
+            <button class="hi-del" @click.stop="delTask(t.id)" title="删除">×</button>
           </div>
         </template>
         <div v-else class="no-history">暂无任务</div>
@@ -127,7 +128,7 @@
             </div>
           </div>
 
-          <div class="doc-viewer-body" ref="docBodyRef">
+          <div class="doc-viewer-body" ref="docBodyRef" :key="previewKey">
             <!-- XLSX: Spreadsheet-like view -->
             <template v-if="store.documentPreview?.file_type === 'xlsx'">
               <div class="spreadsheet-wrapper">
@@ -416,7 +417,7 @@ const docBodyRef = ref(null)
 const activeSheet = ref(0)
 const pdfViewerRef = ref(null)
 const lineItemsExpanded = ref(true)
-const samplePanelOpen = ref(false)
+const samplePanelOpen = ref(true)
 
 // Extraction button text (adapts to mode)
 const extractBtnText = computed(() => {
@@ -437,9 +438,15 @@ const parsedFields = computed(() => {
   return []
 })
 
+const previewKey = computed(() => [
+  store.currentResult?._taskId || store.currentResult?._historyId || '',
+  store.documentPreview?.serve_url || store.documentPreview?.filename || '',
+  store.activeFolderFileIdx,
+].join('|'))
+
 const methods = [
   // { value: 'agent', label: 'Agent 模式', desc: 'AI Agent 智能提取（适合复杂文档）' },
-  { value: 'standard', label: '常规模式', desc: 'Qwen 一次性抽取（更快）' },
+  { value: 'standard', label: '常规模式', desc: 'Qwen 快速抽取（更快）' },
 ]
 
 // ─── Folder tree state ─────────────────────────────────────────────────
@@ -605,6 +612,14 @@ async function delHistory(id) {
   await store.deleteHistory(id)
 }
 
+async function delTask(id) {
+  if (!confirm('确定删除这个抽取任务？')) return
+  highlightedCells.value = new Set()
+  activeSheet.value = 0
+  store.setHighlightedField(null)
+  await store.deleteTask(id)
+}
+
 function fmtTime(iso) {
   if (!iso) return ''
   try {
@@ -613,9 +628,12 @@ function fmtTime(iso) {
   } catch { return iso.slice(0, 16) }
 }
 
-onMounted(() => { store.loadTemplates(); store.loadHistory(); store.loadSampleFolders(); store.loadTasks() })
+onMounted(() => { store.initializeData() })
 
 async function onTaskClick(task) {
+  highlightedCells.value = new Set()
+  activeSheet.value = 0
+  store.setHighlightedField(null)
   if (task.status === 'complete') {
     await store.loadTaskResult(task.id)
   }

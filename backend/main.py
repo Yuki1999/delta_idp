@@ -559,7 +559,7 @@ def build_prompt_from_config(
     ) if line_item_fields else "序号|产品编号|品名|申报数量|单位|单价|金额|原产国"
 
     field_table_rows = "\n".join([
-        f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} |"
+        f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} | {f.get('source_original_text', '')} |"
         for f in extraction_fields
     ])
 
@@ -576,8 +576,8 @@ def build_prompt_from_config(
 
     # Field table
     parts.append(f"\n## 需要提取的{field_count}个字段：\n")
-    parts.append("| 序号 | 字段 | 数据来源 |")
-    parts.append("|------|------|----------|")
+    parts.append("| 序号 | 字段 | 数据来源 | 来源中原文表述 |")
+    parts.append("|------|------|----------|----------------|")
     parts.append(field_table_rows)
 
     # Enabled rules
@@ -589,7 +589,7 @@ def build_prompt_from_config(
 
     # Output format
     parts.append("\n## 输出格式要求：\n")
-    parts.append("1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源），字段\"产品编号\"的值填\"见商品明细\"")
+    parts.append("1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述），字段\"产品编号\"的值填\"见商品明细\"")
     parts.append(f"2. 再输出「商品明细」表格，列头保留发票中的所有属性列，至少包含：{line_item_cols}")
 
     weight_dec = fmt.get("weight_decimals", 3)
@@ -606,6 +606,85 @@ def build_prompt_from_config(
     parts.append(f"\n## 整套报关资料内容如下：\n{combined_content}")
 
     return sys_prompt, "\n".join(parts)
+
+
+def _history_file_names(folder_path: str) -> List[str]:
+    """Return stable display names for files in an extraction folder."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return []
+    return [
+        p.name
+        for p in sorted(Path(folder_path).iterdir())
+        if p.is_file()
+    ]
+
+
+def _preview_path_ref(file_path: str) -> str:
+    """Return a path reference accepted by preview APIs without exposing absolute paths."""
+    if not file_path:
+        return ""
+    project_root = Path(__file__).resolve().parents[1]
+    try:
+        return Path(file_path).resolve().relative_to(project_root).as_posix()
+    except ValueError:
+        return file_path
+
+
+def _find_uploaded_file_by_original_name(filename: str) -> str:
+    """Find newest uploaded file matching either exact name or UUID-prefixed upload name."""
+    if not filename or filename.startswith("["):
+        return ""
+
+    matches = []
+    for path in Path(UPLOAD_DIR).rglob(filename):
+        if path.is_file():
+            matches.append(path)
+    suffix = f"_{filename}"
+    for path in Path(UPLOAD_DIR).rglob(f"*{suffix}"):
+        if path.is_file():
+            matches.append(path)
+
+    if not matches:
+        return ""
+    newest = max(matches, key=lambda p: p.stat().st_mtime)
+    return _preview_path_ref(str(newest))
+
+
+def _infer_uploaded_folder(folder_name: str) -> tuple[str, List[str]]:
+    """Infer uploaded set folder data for old history entries like '[资料集] 846eb8eb'."""
+    if not folder_name:
+        return "", []
+    candidates = [
+        Path(UPLOAD_DIR) / folder_name,
+        Path(UPLOAD_DIR) / f"set_{folder_name}",
+    ]
+    for folder in candidates:
+        if folder.is_dir():
+            return _preview_path_ref(str(folder)), _history_file_names(str(folder))
+    return "", []
+
+
+def _enrich_history_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill preview metadata for older history entries saved without input paths."""
+    enriched = dict(entry)
+    filename = enriched.get("filename", "")
+
+    if not enriched.get("folder_path") and isinstance(filename, str) and filename.startswith("["):
+        folder_name = filename.replace("[资料集]", "", 1).strip()
+        folder_path, folder_files = _infer_uploaded_folder(folder_name)
+        if folder_path:
+            enriched["folder_path"] = folder_path
+            enriched["folder_files"] = folder_files
+
+    if not enriched.get("file_path") and isinstance(filename, str) and not filename.startswith("["):
+        file_path = _find_uploaded_file_by_original_name(filename)
+        if file_path:
+            enriched["file_path"] = file_path
+
+    if enriched.get("folder_path") and not enriched.get("folder_files"):
+        enriched["folder_files"] = _history_file_names(enriched["folder_path"])
+
+    return enriched
 
 
 async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dict):
@@ -708,7 +787,7 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             )
         else:
             field_table_rows = "\n".join([
-                f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} |"
+                f"| {f.get('field_no', '')} | {f.get('label', f.get('name', ''))} | {f.get('data_source', '')} | {f.get('source_original_text', '')} |"
                 for f in extraction_fields
             ])
             line_item_cols = "|".join([f.get("label", f.get("name", "")) for f in line_item_fields]) if line_item_fields else "序号|产品编号|品名|申报数量|单位|单价|金额|原产国"
@@ -724,12 +803,12 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
 
 ## 需要提取的{field_count}个字段：
 
-| 序号 | 字段 | 数据来源 |
-|------|------|----------|
+| 序号 | 字段 | 数据来源 | 来源中原文表述 |
+|------|------|----------|----------------|
 {field_table_rows}
 
 ## 输出格式要求：
-1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源）
+1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述）
 2. 再输出「商品明细」表格，列头至少包含：{line_item_cols}
 3. 缺失字段填 null，不得编造
 4. **绝对禁止省略、合并、截断明细行**
@@ -781,6 +860,10 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
         storage.save_extraction_history({
             "id": task_id,
             "filename": input_name,
+            "file_path": _preview_path_ref(file_path) if file_path else "",
+            "folder_path": _preview_path_ref(folder_path) if folder_path else "",
+            "folder_files": _history_file_names(folder_path),
+            "input": input_data,
             "document_type": template_id,
             "vendor": "",
             "method": "standard",
@@ -805,7 +888,7 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
 async def list_history():
     """List all extraction history entries."""
     entries = storage.list_extraction_history()
-    return {"history": entries}
+    return {"history": [_enrich_history_entry(entry) for entry in entries]}
 
 
 @app.get("/api/history/{history_id}")
@@ -814,7 +897,7 @@ async def get_history(history_id: str):
     entry = storage.get_extraction_history(history_id)
     if not entry:
         raise HTTPException(status_code=404, detail="History entry not found")
-    return entry
+    return _enrich_history_entry(entry)
 
 
 @app.delete("/api/history/{history_id}")
@@ -999,13 +1082,30 @@ async def agent_extract(
 
 def _resolve_upload_path(filename: str) -> str:
     """Resolve filename to actual file path in uploads or project root."""
+    if not filename:
+        return ""
+
+    raw_path = Path(filename)
+    if raw_path.is_absolute() and raw_path.exists() and raw_path.is_file():
+        return str(raw_path)
+
     file_path = os.path.join(UPLOAD_DIR, filename)
     if os.path.exists(file_path):
         return file_path
+
     project_root = os.path.dirname(os.path.dirname(__file__))
     file_path = os.path.join(project_root, filename)
     if os.path.exists(file_path):
         return file_path
+
+    # Older history entries only stored the original filename, while uploads are
+    # stored as UUID-prefixed files. Pick the newest matching upload.
+    inferred = _find_uploaded_file_by_original_name(os.path.basename(filename))
+    if inferred:
+        file_path = os.path.join(project_root, inferred)
+        if os.path.exists(file_path):
+            return file_path
+
     return ""
 
 

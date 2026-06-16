@@ -265,7 +265,7 @@ app.post("/api/agent/extract-folder", async (req, res) => {
 
     // Build dynamic field table for the prompt
     const fieldTableRows = templateFields.map((f: any) => {
-      return `| ${f.field_no || ''} | ${f.label || f.name} | ${f.data_source || ''} |`;
+      return `| ${f.field_no || ''} | ${f.label || f.name} | ${f.data_source || ''} | ${f.source_original_text || ''} |`;
     }).join('\n');
 
     const fieldCount = templateFields.length;
@@ -293,12 +293,12 @@ app.post("/api/agent/extract-folder", async (req, res) => {
 
 ## 需要提取的${fieldCount}个字段：
 
-| 序号 | 字段 | 数据来源 |
-|------|------|----------|
+| 序号 | 字段 | 数据来源 | 来源中原文表述 |
+|------|------|----------|----------------|
 ${fieldTableRows}
 
 ## 输出格式要求：
-1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源）
+1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述）
 2. 再输出「商品明细」表格，列头至少包含：${lineItemCols}
 3. 缺失字段填 null，不得编造
 4. **绝对禁止省略、合并、截断明细行**
@@ -474,7 +474,7 @@ ${matchingHint}
 已解析的文档内容：
 ${preview}
 
-请提取所有可用字段，包括字段表（字段|值|置信度）和商品明细表（如有），最后注明单据类型、厂商、使用的模板。`;
+请提取所有可用字段，包括字段表（字段|值|置信度|数据来源|来源中原文表述）和商品明细表（如有），最后注明单据类型、厂商、使用的模板。`;
 
     let fullReply = "";
     agent.subscribe((event) => {

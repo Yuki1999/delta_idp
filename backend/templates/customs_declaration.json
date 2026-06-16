@@ -1,19 +1,51 @@
 {
   "name": "报关单综合抽取模板",
+  "id": "customs_declaration",
   "description": "报关单综合信息抽取模板，适用于整套报关资料（客户邮件+商业发票+装箱单+业务说明），通过交叉引用多份文件提取22个报关字段。",
-  "system_prompt": "你是一位专业报关员，擅长从国际物流单据中提取结构化信息。",
-  "prompt_template": "",
   "prompt_config": {
     "role": "专业报关员",
     "doc_types": "客户委托邮件、业务说明、商业发票(Invoice)、装箱单(Packing List)",
     "rules": [
-      { "key": "primary_source_iv", "label": "以发票(IV)为主数据源，保留发票中每一行明细的所有属性列", "enabled": true },
-      { "key": "cross_validate", "label": "装箱单(PL)用于校验数量、件数，补充发票缺失信息", "enabled": true },
-      { "key": "iv_priority_conflict", "label": "发票与装箱单数据不一致时，以发票为准并在备注中标注差异", "enabled": true },
-      { "key": "no_truncation", "label": "绝对禁止省略、合并、截断明细行或使用'...'代替", "enabled": true },
-      { "key": "qty_total", "label": "申报数量字段必须填写所有明细行数量的合计总数", "enabled": true },
-      { "key": "confidence", "label": "标注置信度（高/中/低）", "enabled": true },
-      { "key": "null_missing", "label": "缺失字段填 null，不得编造", "enabled": true }
+      {
+        "key": "primary_source_iv",
+        "label": "以发票(IV)为主数据源，保留发票中每一行明细的所有属性列",
+        "enabled": true
+      },
+      {
+        "key": "cross_validate",
+        "label": "装箱单(PL)用于校验数量、件数，补充发票缺失信息",
+        "enabled": true
+      },
+      {
+        "key": "iv_priority_conflict",
+        "label": "发票与装箱单数据不一致时，以发票为准并在备注中标注差异",
+        "enabled": true
+      },
+      {
+        "key": "no_truncation",
+        "label": "绝对禁止省略、合并、截断明细行或使用'...'代替",
+        "enabled": true
+      },
+      {
+        "key": "qty_total",
+        "label": "申报数量字段必须填写所有明细行数量的合计总数",
+        "enabled": true
+      },
+      {
+        "key": "confidence",
+        "label": "标注置信度（高/中/低）",
+        "enabled": true
+      },
+      {
+        "key": "null_missing",
+        "label": "缺失字段填 null，不得编造",
+        "enabled": true
+      },
+      {
+        "key": "custom_1781166540257",
+        "label": "优先用发票和装箱单里的原始描述，不要翻译和改写",
+        "enabled": true
+      }
     ],
     "format": {
       "weight_decimals": 3,
@@ -22,201 +54,244 @@
     },
     "additional_notes": ""
   },
+  "system_prompt": "你是一位专业报关员，擅长从国际物流单据中提取结构化信息。",
+  "prompt_template": "",
   "extraction_fields": [
     {
       "name": "entrust_company",
       "label": "委托单位",
       "field_no": 1,
-      "description": "根据哪家客户发的委托邮件或是资料上的客户信息来判断",
+      "description": "",
       "data_source": "客户邮件/资料客户信息",
+      "source_original_text": "Shipper/Export",
       "data_type": "string"
     },
     {
       "name": "customs_broker",
       "label": "报关单位",
       "field_no": 2,
-      "description": "根据销售指定的供应商来判断",
+      "description": "",
       "data_source": "业务说明中指定的供应商",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "business_type",
       "label": "业务类型",
       "field_no": 3,
-      "description": "根据客户邮件中报关资料的内容来判断（如进料加工、来料加工、一般贸易等）",
+      "description": "",
       "data_source": "客户邮件内容",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "shipper",
       "label": "发货单位",
       "field_no": 4,
-      "description": "根据客户资料上的客户信息以及业务类型结合起来判断",
+      "description": "",
       "data_source": "客户资料+业务类型",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "consignee",
       "label": "收货单位",
       "field_no": 5,
-      "description": "根据客户资料上的客户信息以及业务类型结合起来判断",
+      "description": "",
       "data_source": "客户资料+业务类型",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "transport_mode",
       "label": "运输方式",
       "field_no": 6,
-      "description": "根据业务类型和口岸信息结合起来判断",
+      "description": "",
       "data_source": "业务类型+口岸信息",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "package_count",
       "label": "件数",
       "field_no": 7,
-      "description": "填写客户箱单上的件数",
+      "description": "",
       "data_source": "装箱单",
-      "data_type": "number"
+      "source_original_text": "TOTAL",
+      "data_type": "string"
     },
     {
       "name": "gross_weight",
       "label": "毛重",
       "field_no": 8,
-      "description": "填写客户箱单上的毛重",
+      "description": "",
       "data_source": "装箱单",
-      "data_type": "number",
-      "format": "3位小数"
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "net_weight",
       "label": "净重",
       "field_no": 9,
-      "description": "填写客户箱单上的净重",
+      "description": "",
       "data_source": "装箱单",
-      "data_type": "number",
-      "format": "3位小数"
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "volume",
       "label": "体积",
       "field_no": 10,
-      "description": "填写客户箱单上的体积",
+      "description": "",
       "data_source": "装箱单",
-      "data_type": "number",
-      "format": "4位小数"
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "package_type",
       "label": "包装方式",
       "field_no": 11,
-      "description": "填写客户报关资料箱单上的包装类型",
+      "description": "",
       "data_source": "装箱单",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "invoice_no",
       "label": "发票号码",
       "field_no": 12,
-      "description": "填写客户发票上的发票号码",
+      "description": "",
       "data_source": "发票",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "destination_or_loading_port",
       "label": "目的地/装货港",
       "field_no": 13,
-      "description": "根据业务类型来判断（出口填目的地，进口填装货港）",
+      "description": "",
       "data_source": "业务类型+发票",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "customs_port",
       "label": "进出境关别",
       "field_no": 14,
-      "description": "客户邮件中的信息来判断",
+      "description": "",
       "data_source": "客户邮件",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "origin_destination_place",
       "label": "起抵运地",
       "field_no": 15,
-      "description": "客户报关资料中发票上体现",
+      "description": "",
       "data_source": "发票/业务说明",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "product_code",
       "label": "产品编号",
       "field_no": 16,
-      "description": "优先从发票(IV)中提取客户实际料号，装箱单(PL)用于校验和补充",
+      "description": "",
       "data_source": "发票(优先)/装箱单(校验补充)",
-      "data_type": "string",
-      "is_line_item": true
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "declaration_quantity",
       "label": "申报数量",
       "field_no": 17,
-      "description": "优先从发票(IV)中提取数量，装箱单(PL)用于校验",
+      "description": "",
       "data_source": "发票(优先)/装箱单(校验补充)",
-      "data_type": "number",
-      "is_line_item": true
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "currency",
       "label": "币制",
       "field_no": 18,
-      "description": "填写客户发票上的币制",
+      "description": "",
       "data_source": "发票",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "total_amount",
       "label": "总价",
       "field_no": 19,
-      "description": "填写客户发票上的金额",
+      "description": "",
       "data_source": "发票",
-      "data_type": "number",
-      "format": "2位小数"
+      "source_original_text": "",
+      "data_type": "string"
     },
     {
       "name": "country_of_origin",
       "label": "原产国",
       "field_no": 20,
-      "description": "填写客户发票或箱单上的原产国",
+      "description": "",
       "data_source": "发票/装箱单",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "final_destination_country",
       "label": "最终目的国",
       "field_no": 21,
-      "description": "根据业务类型和起抵运地来结合判断",
+      "description": "",
       "data_source": "业务类型+起抵运地",
+      "source_original_text": "",
       "data_type": "string"
     },
     {
       "name": "legal_quantity",
       "label": "法定数量",
       "field_no": 22,
-      "description": "根据商品编码系统自动带出法定单位，再通过法定单位判断录入值（需人工确认）",
+      "description": "",
       "data_source": "商品编码系统",
-      "data_type": "number",
-      "requires_manual_confirmation": true,
-      "is_line_item": true
+      "source_original_text": "",
+      "data_type": "string"
     }
   ],
   "line_item_fields": [
-    {"name": "item_no", "label": "序号"},
-    {"name": "product_code", "label": "产品编号"},
-    {"name": "product_name", "label": "品名"},
-    {"name": "declaration_quantity", "label": "申报数量"},
-    {"name": "unit", "label": "单位"},
-    {"name": "unit_price", "label": "单价"},
-    {"name": "amount", "label": "金额"},
-    {"name": "country_of_origin", "label": "原产国"},
-    {"name": "legal_quantity", "label": "法定数量（需人工确认）"}
+    {
+      "name": "item_no",
+      "label": "序号"
+    },
+    {
+      "name": "product_code",
+      "label": "产品编号"
+    },
+    {
+      "name": "product_name",
+      "label": "品名"
+    },
+    {
+      "name": "declaration_quantity",
+      "label": "申报数量"
+    },
+    {
+      "name": "unit",
+      "label": "单位"
+    },
+    {
+      "name": "unit_price",
+      "label": "单价"
+    },
+    {
+      "name": "amount",
+      "label": "金额"
+    },
+    {
+      "name": "country_of_origin",
+      "label": "原产国"
+    },
+    {
+      "name": "legal_quantity",
+      "label": "法定数量（需人工确认）"
+    }
   ]
 }

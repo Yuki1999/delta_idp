@@ -438,17 +438,27 @@ export const useExtractionStore = defineStore('extraction', () => {
       if (!resp.ok) throw new Error('Not found')
       const task = await resp.json()
       if (task.result) {
+        const filename = task.input?.filename || ''
         currentResult.value = {
           fields: task.result.fields || [],
           line_items: task.result.line_items || [],
           markdown: task.result.markdown || '',
           method: task.method || '',
-          filename: task.input?.filename || '',
+          filename,
           _fromTask: true,
           _taskId: task.id,
         }
+        await restorePreviewForResult({ ...task, filename })
       }
     } catch (e) { console.warn('Task load failed:', e) }
+  }
+
+  async function deleteTask(taskId) {
+    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+    if (currentResult.value?._taskId === taskId) {
+      clearResultState()
+    }
+    await loadTasks()
   }
 
   // ─── Templates & History ───────────────────────────────────────────
@@ -478,25 +488,39 @@ export const useExtractionStore = defineStore('extraction', () => {
     const resp = await fetch(`/api/history/${id}`)
     if (!resp.ok) throw new Error('Not found')
     const data = await resp.json()
+    const filename = data.filename || ''
     currentResult.value = {
       fields: data.fields || [],
       line_items: data.line_items || [],
       method: data.method || '',
       markdown: data.markdown || '',
-      filename: data.filename || '',
+      filename,
       _fromHistory: true,
       _historyId: data.id,
     }
-    // Load document preview if filename available (skip for folder extractions)
-    const isFolderExtraction = data.method === 'folder_extraction' || (data.filename && data.filename.startsWith('['))
-    if (data.filename && !isFolderExtraction) {
+    await restorePreviewForResult(data)
+  }
+
+  async function restorePreviewForResult(source = {}) {
+    const filename = source.filename || source.input?.filename || ''
+    const filePath = source.file_path || source.input?.file_path || ''
+    const folderPath = source.folder_path || source.input?.folder_path || ''
+    const folderFileNames = source.folder_files || source.input?.folder_files || source.files || []
+    const resultMethod = source.method || ''
+    const isFolderExtraction = Boolean(folderPath) || resultMethod === 'folder_extraction' || (filename && filename.startsWith('['))
+
+    if (folderPath) {
+      documentPreview.value = null
+      const folderName = filename?.replace(/^\[资料集\]\s*/, '') || folderPath.split('/').pop()?.replace(/^set_/, '') || ''
+      await loadFolderFiles(folderName, folderPath, folderFileNames)
+    } else if (filePath || (filename && !isFolderExtraction)) {
       folderFiles.value = []
       activeFolderFileIdx.value = 0
-      await loadDocumentPreview(data.filename)
+      await loadDocumentPreview(filePath || filename)
     } else if (isFolderExtraction) {
       documentPreview.value = null
       // Extract folder name from "[资料集] DS12650253" format
-      const folderName = data.filename?.replace(/^\[资料集\]\s*/, '') || ''
+      const folderName = filename?.replace(/^\[资料集\]\s*/, '') || ''
       await loadFolderFiles(folderName)
     } else {
       documentPreview.value = null
@@ -521,7 +545,18 @@ export const useExtractionStore = defineStore('extraction', () => {
 
   async function deleteHistory(id) {
     await fetch(`/api/history/${id}`, { method: 'DELETE' })
+    if (currentResult.value?._historyId === id) {
+      clearResultState()
+    }
     await loadHistory()
+  }
+
+  function clearResultState() {
+    currentResult.value = null
+    documentPreview.value = null
+    highlightedField.value = null
+    folderFiles.value = []
+    activeFolderFileIdx.value = 0
   }
 
   // ─── Sample Folders ────────────────────────────────────────────────
@@ -554,8 +589,33 @@ export const useExtractionStore = defineStore('extraction', () => {
     activeFolderFileIdx.value = 0
   }
 
-  async function loadFolderFiles(folderName) {
+  async function initializeData() {
+    await Promise.all([
+      loadTemplates(),
+      loadHistory(),
+      loadSampleFolders(),
+      loadTasks(),
+    ])
+    if (tasks.value.some(t => t.status === 'running')) {
+      startTaskPolling()
+    }
+  }
+
+  async function loadFolderFiles(folderName, folderPath = '', fileNames = []) {
     if (!folderName) { folderFiles.value = []; return }
+    if (folderPath && fileNames.length) {
+      folderFiles.value = fileNames.map(name => ({
+        name,
+        folderName,
+        file_path: `${folderPath.replace(/\/$/, '')}/${name}`,
+      }))
+      activeFolderFileIdx.value = 0
+      if (folderFiles.value.length > 0) {
+        await loadFolderFilePreview(0)
+      }
+      return
+    }
+
     // Ensure sampleFolders loaded
     if (!sampleFolders.value.length) {
       await loadSampleFolders()
@@ -578,7 +638,7 @@ export const useExtractionStore = defineStore('extraction', () => {
     activeFolderFileIdx.value = idx
     const file = folderFiles.value[idx]
     if (!file) { documentPreview.value = null; return }
-    const relativePath = `samples/${file.folderName}/${file.name}`
+    const relativePath = file.file_path || `samples/${file.folderName}/${file.name}`
     await loadDocumentPreview(relativePath)
   }
 
@@ -594,6 +654,7 @@ export const useExtractionStore = defineStore('extraction', () => {
     loadHistory, loadHistoryEntry, loadDocumentPreview, setHighlightedField, deleteHistory,
     loadSampleFolders, selectFolder,
     loadFolderFiles, loadFolderFilePreview,
-    loadTasks, startTaskPolling, stopTaskPolling, loadTaskResult,
+    loadTasks, startTaskPolling, stopTaskPolling, loadTaskResult, deleteTask,
+    initializeData,
   }
 })

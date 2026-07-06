@@ -10,9 +10,40 @@
         </div>
         <!-- Mode badge -->
         <div v-if="store.uploadedFiles.length" class="mode-badge" :class="store.extractionMode">
-          <span v-if="store.extractionMode === 'set'">📋 资料集模式 — 将综合抽取22个报关字段</span>
+          <span v-if="store.extractionMode === 'set' && store.summaryMode">📊 汇总模式 — 多张发票箱单合并申报为一份报关单</span>
+          <span v-else-if="store.extractionMode === 'set'">📋 资料集模式 — 将综合抽取22个报关字段</span>
           <span v-else>📄 单据模式</span>
         </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">⚙️ 抽取配置</h2>
+        <div class="form-g">
+          <label>抽取模板</label>
+          <select v-model="store.templateId" class="select">
+            <option v-for="t in store.templates" :key="t.id" :value="t.id">{{ t.name }} ({{ t.field_count || 0 }}个字段)</option>
+          </select>
+        </div>
+        <div class="form-g">
+          <label>技术路径</label>
+          <label v-for="m in methods" :key="m.value" class="radio-item">
+            <input type="radio" :value="m.value" v-model="store.method" />
+            <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
+          </label>
+        </div>
+        <div class="form-g" v-if="store.extractionMode === 'set'">
+          <label class="checkbox-item">
+            <input type="checkbox" v-model="store.summaryMode" />
+            <span>
+              <strong>📊 汇总模式</strong>
+              <small>多张发票箱单合并成一份报关单（金额、毛净重、件数累加，明细全部保留）</small>
+            </span>
+          </label>
+        </div>
+        <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
+          🔍 {{ extractBtnText }}
+        </button>
+        <StatusBadge :message="store.statusMsg" :type="store.statusType" />
       </section>
 
       <section class="panel collapsible-panel">
@@ -240,11 +271,40 @@
 
       <!-- Empty state -->
       <div v-else class="content-empty">
-        <div v-if="store.isProcessing" class="processing-state">
-          <div class="processing-spinner"></div>
-          <h2>正在抽取中</h2>
+        <div v-if="store.isProcessing || store.toolEvents.length" class="processing-state">
+          <div v-if="store.isProcessing" class="processing-spinner"></div>
+          <h2>{{ store.toolEvents.length ? '合并申报 Agent 工作中' : '正在抽取中' }}</h2>
           <p class="processing-msg">{{ store.statusMsg || '正在处理...' }}</p>
-          <div class="processing-steps">
+
+          <!-- Tool-call trace (summary-mode agent) -->
+          <div v-if="store.toolEvents.length" class="tool-trace">
+            <div
+              v-for="ev in store.toolEvents"
+              :key="ev.id"
+              class="tool-step"
+              :class="ev.status"
+            >
+              <span class="tool-icon">
+                {{ ev.status === 'done' ? '✓' : ev.status === 'error' ? '✗' : '⏳' }}
+              </span>
+              <div class="tool-body">
+                <div class="tool-head">
+                  <span class="tool-label">{{ ev.label || ev.name }}</span>
+                  <span class="tool-args" v-if="ev.args && Object.keys(ev.args).length">
+                    ({{ formatToolArgs(ev.args) }})
+                  </span>
+                  <span
+                    class="tool-timing"
+                    v-if="ev.ended_at && ev.started_at"
+                  >{{ ((ev.ended_at - ev.started_at) / 1000).toFixed(1) }}s</span>
+                </div>
+                <pre class="tool-preview" v-if="ev.preview">{{ ev.preview }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- Legacy 3-step ladder (only for non-summary flows) -->
+          <div class="processing-steps" v-if="!store.toolEvents.length">
             <div class="step-item" :class="{ active: store.statusMsg?.includes('Excel') || store.statusMsg?.includes('PDF') || store.statusMsg?.includes('解析') }">
               <span class="step-dot"></span>文档解析
             </div>
@@ -628,6 +688,23 @@ function fmtTime(iso) {
   } catch { return iso.slice(0, 16) }
 }
 
+function formatToolArgs(args) {
+  if (!args || typeof args !== 'object') return ''
+  const entries = Object.entries(args)
+  if (!entries.length) return ''
+  // Shorten file paths to just the basename for readability
+  const parts = entries.map(([k, v]) => {
+    let val = v
+    if (typeof v === 'string' && v.includes('/')) {
+      val = v.split('/').pop()
+    } else if (typeof v === 'string' && v.length > 40) {
+      val = v.slice(0, 40) + '…'
+    }
+    return `${k}=${val}`
+  })
+  return parts.join(', ')
+}
+
 onMounted(() => { store.initializeData() })
 
 async function onTaskClick(task) {
@@ -777,6 +854,78 @@ async function onTaskClick(task) {
 .step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-gray-300); transition: all .2s; }
 .step-item.active .step-dot { background: var(--c-primary); box-shadow: 0 0 6px rgba(99, 102, 241, .4); }
 
+/* ─── Tool-call trace (summary-mode agent) ──────────────────────── */
+.tool-trace {
+  max-width: 720px;
+  margin: 20px auto 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tool-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-gray-200);
+  border-left: 3px solid var(--c-gray-300);
+  border-radius: var(--radius);
+  background: white;
+  transition: all .2s;
+}
+.tool-step.running {
+  border-left-color: var(--c-primary);
+  background: rgba(99, 102, 241, .04);
+}
+.tool-step.done { border-left-color: #22c55e; }
+.tool-step.error { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }
+.tool-icon {
+  font-size: 16px;
+  line-height: 20px;
+  min-width: 20px;
+  text-align: center;
+}
+.tool-step.running .tool-icon {
+  animation: spin 1.5s linear infinite;
+  display: inline-block;
+}
+.tool-step.done .tool-icon { color: #16a34a; }
+.tool-step.error .tool-icon { color: #dc2626; }
+.tool-body { flex: 1; min-width: 0; }
+.tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.tool-label { font-weight: 600; color: var(--c-gray-800); }
+.tool-args {
+  color: var(--c-gray-500);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.tool-timing {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--c-gray-400);
+  font-family: ui-monospace, monospace;
+}
+.tool-preview {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: var(--c-gray-100);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--c-gray-600);
+  font-family: ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 120px;
+  line-height: 1.5;
+}
+
 /* ─── Sidebar Components ──────────────────────── */
 .panel { background: white; border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg); padding: 14px; }
 .panel-title { font-size: 13px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
@@ -789,6 +938,11 @@ async function onTaskClick(task) {
 .radio-item input[type="radio"] { margin-top: 3px; accent-color: var(--c-primary); }
 .radio-item strong { display: block; font-size: 12px; color: var(--c-gray-800); }
 .radio-item small { font-size: 10px; color: var(--c-gray-500); }
+.checkbox-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--c-gray-200); border-radius: var(--radius); cursor: pointer; transition: all .15s; }
+.checkbox-item:has(input:checked) { border-color: var(--c-primary); background: var(--c-primary-light); }
+.checkbox-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--c-primary); }
+.checkbox-item strong { display: block; font-size: 12px; color: var(--c-gray-800); }
+.checkbox-item small { display: block; font-size: 10px; color: var(--c-gray-500); margin-top: 2px; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all .15s; }
 .btn.primary { background: var(--c-primary); color: white; }
 .btn.primary:hover { background: var(--c-primary-dark); }

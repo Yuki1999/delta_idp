@@ -15,6 +15,7 @@ import {
   Type,
 } from "@earendil-works/pi-ai";
 import type { Model, Tool } from "@earendil-works/pi-ai";
+import { summaryTools, type SummaryContext } from "./tools/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -224,6 +225,48 @@ export function createAgent(options?: { systemPrompt?: string; skipTemplateTool?
 export function reloadSkills() {
   _cachedSkills = null;
   return getSkills();
+}
+
+// ─── Summary-mode Agent Factory ─────────────────────────────────────
+// Special-purpose agent for "multi-invoice merged declaration" workflow.
+// The 5 tools in tools/index.ts are bound to a fresh per-request SummaryContext,
+// so parallel/concurrent requests do not share state.
+
+export function createSummaryAgent(options?: { extraSystemPrompt?: string }) {
+  const { ctx, tools: mergeTools } = summaryTools();
+
+  // Load the customs-merge skill (falls back gracefully if missing).
+  const allSkills = getSkills();
+  const mergeSkill = allSkills.find((s) => s.filePath.includes("customs-merge"));
+  const skillBlock = mergeSkill ? formatSkillForPrompt(mergeSkill) : "";
+
+  const baseSystem = `你是 Delta IDP 报关专家 agent，专门处理**多票合并申报**场景。
+以下是本次任务必须严格遵循的 Skill 规范：
+
+${skillBlock}
+
+关键行为准则：
+1. 用户会告诉你有哪些 _IV 和 _PL 文件路径。你必须**分别**对每一份调用 read_invoice / read_packing_list（可并行），一份都不能漏。
+2. 抽取完全部单据后，依次调用 check_consistency → merge_declarations → render_declaration。
+3. **禁止**自己算加法、**禁止**跳过工具直接输出表格。合并数据必须来自 merge_declarations 工具。
+4. 最终回复：直接呈现 render_declaration 返回的 Markdown，前面可以补一两句概述。
+${options?.extraSystemPrompt || ""}`;
+
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: baseSystem,
+      model: qwenModel,
+      thinkingLevel: "off",
+      tools: [readDocumentTool, ...mergeTools], // keep read_document as fallback
+      messages: [],
+    },
+    getApiKey: (provider) => {
+      if (provider === "dashscope") return DASHSCOPE_API_KEY;
+      return undefined;
+    },
+  });
+
+  return { agent, ctx };
 }
 
 export type { Agent, Skill };

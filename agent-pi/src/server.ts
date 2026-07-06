@@ -3,8 +3,10 @@
  * Bridges the pi agent to the Vue frontend via HTTP/SSE.
  */
 import express from "express";
-import { createAgent } from "./agent.js";
+import { createAgent, createSummaryAgent } from "./agent.js";
 import * as reviews from "./review.js";
+import { readdirSync, statSync } from "node:fs";
+import { join as pathJoin } from "node:path";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
 import * as sessions from "./sessions.js";
@@ -171,8 +173,219 @@ app.delete("/api/agent/sessions/:id", (req, res) => {
 
 // ─── Folder Extraction (SSE) ────────────────────────────────────────────
 
+/**
+ * Summary-mode folder extraction: multi-invoice merged declaration.
+ * Uses createSummaryAgent() which is wired with 5 deterministic tools.
+ * SSE bridge additionally forwards `tool_call` / `tool_result` events so
+ * the frontend can render a step-by-step tool-invocation trace.
+ */
+async function runSummaryModeAgent(opts: {
+  folder_path: string;
+  method: string;
+  template_id: string;
+  taskId: string;
+  send: (event: string, data: unknown) => void;
+  updateTask: (fields: Record<string, unknown>) => Promise<void>;
+}) {
+  const { folder_path, method, template_id, taskId, send, updateTask } = opts;
+
+  // ── 1) Enumerate _IV and _PL files in the folder ──
+  send("status", { message: "识别资料集中的发票 (_IV) 和箱单 (_PL) 文件..." });
+  await updateTask({ progress: "识别 IV/PL 文件..." });
+
+  let ivFiles: string[] = [];
+  let plFiles: string[] = [];
+  let otherFiles: string[] = [];
+  try {
+    const entries = readdirSync(folder_path).sort();
+    for (const name of entries) {
+      const full = pathJoin(folder_path, name);
+      try {
+        if (!statSync(full).isFile()) continue;
+      } catch { continue; }
+      const upper = name.toUpperCase();
+      if (upper.includes("_IV") || upper.includes("INVOICE")) ivFiles.push(full);
+      else if (upper.includes("_PL") || upper.includes("PACKING")) plFiles.push(full);
+      else otherFiles.push(full);
+    }
+  } catch (e: any) {
+    throw new Error(`无法读取文件夹 ${folder_path}: ${e.message}`);
+  }
+
+  if (ivFiles.length === 0 && plFiles.length === 0) {
+    throw new Error(
+      `文件夹 ${folder_path} 中未识别到 _IV / _PL 文件。合并模式需要至少一份发票和一份箱单。`,
+    );
+  }
+
+  send("status", {
+    message: `识别到 ${ivFiles.length} 张发票 + ${plFiles.length} 张箱单，正在启动合并申报 agent...`,
+  });
+  await updateTask({
+    progress: `合并模式：${ivFiles.length} 张发票 + ${plFiles.length} 张箱单`,
+  });
+
+  // ── 2) Build agent + prompt ──
+  const { agent, ctx } = createSummaryAgent();
+
+  const ivList = ivFiles.map((p) => `  - ${p}`).join("\n") || "  (无)";
+  const plList = plFiles.map((p) => `  - ${p}`).join("\n") || "  (无)";
+  const prompt = `请对以下多张发票和箱单执行**合并申报**流程（按 customs-merge skill 的 4 步工作流）。
+
+发票文件（共 ${ivFiles.length} 份）：
+${ivList}
+
+箱单文件（共 ${plFiles.length} 份）：
+${plList}
+
+请立即开始：
+1) 对每份 _IV 调用一次 read_invoice、对每份 _PL 调用一次 read_packing_list（可在同一响应里并行发起）
+2) 全部抽完后调用 check_consistency
+3) 调用 merge_declarations
+4) 调用 render_declaration 得到最终报关单 Markdown
+
+最终回复请以 render_declaration 返回的 Markdown 为主体，前面加一句概述（例如"已合并 3 张发票"）。`;
+
+  // ── 3) Subscribe events → SSE bridge ──
+  let fullReply = "";
+  const toolCallLabels = new Map<string, string>();
+  agent.subscribe((event: any) => {
+    switch (event.type) {
+      case "message_update": {
+        const evt = event.assistantMessageEvent;
+        if (evt?.type === "text_delta" && evt.delta) {
+          fullReply += evt.delta;
+          send("text_delta", { delta: evt.delta });
+        }
+        break;
+      }
+      case "tool_execution_start": {
+        const id = event.toolCallId || "";
+        const name = event.toolName || "";
+        // Look up the tool's `label` from the agent's registered tools.
+        const toolDef = (agent as any).state?.tools?.find((t: any) => t.name === name);
+        const label = toolDef?.label || name;
+        toolCallLabels.set(id, label);
+        send("tool_call", {
+          id,
+          name,
+          label,
+          args: event.args || {},
+        });
+        break;
+      }
+      case "tool_execution_end": {
+        const id = event.toolCallId || "";
+        const name = event.toolName || "";
+        const result = event.result || {};
+        const preview = Array.isArray(result.content)
+          ? (result.content.find((c: any) => c.type === "text")?.text || "").slice(0, 300)
+          : "";
+        send("tool_result", {
+          id,
+          name,
+          label: toolCallLabels.get(id) || name,
+          isError: !!event.isError,
+          preview,
+        });
+        break;
+      }
+    }
+  });
+
+  // ── 4) Run agent ──
+  try {
+    await agent.prompt(prompt);
+  } catch (e: any) {
+    send("error", { message: `Agent 执行失败: ${e.message}` });
+    throw e;
+  }
+
+  // ── 5) Persist results ──
+  const folderName = folder_path.split("/").pop() || folder_path;
+  const reviewItem = reviews.createReview({
+    filename: `[合并申报] ${folderName}`,
+    file_path: folder_path,
+    document_type: template_id,
+    vendor: "",
+    method,
+    fields: [],
+    line_items: [],
+    markdown: fullReply,
+    source: "summary_mode",
+  });
+
+  try {
+    await fetch(`${BACKEND_URL}/api/history/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: reviewItem.id,
+        filename: `[合并申报] ${folderName}`,
+        document_type: template_id,
+        vendor: "",
+        method: "summary_mode",
+        fields: [],
+        line_items: [],
+        markdown: fullReply,
+        field_count: 0,
+        summary_mode: true,
+        doc_stats: {
+          invoice_count: ivFiles.length,
+          packing_list_count: plFiles.length,
+        },
+        merged_totals: ctx.merged?.totals,
+        created_at: new Date().toISOString(),
+      }),
+    }).catch(() => {});
+  } catch {}
+
+  send("message_end", { reply: fullReply });
+  send("done", { review_id: reviewItem.id, task_id: taskId });
+
+  await updateTask({
+    status: "complete",
+    progress: "",
+    result: {
+      markdown: fullReply,
+      fields: [],
+      line_items: [],
+      summary_mode: true,
+      merged_totals: ctx.merged?.totals,
+    },
+    completed_at: new Date().toISOString(),
+  });
+}
+
+app.get("/api/debug/sse-stream", async (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.socket?.setNoDelay(true);
+  for (let i = 0; i < 10; i++) {
+    const ok = res.write(`event: tick\ndata: ${JSON.stringify({ i })}\n\n`);
+    console.log(`[debug-sse] wrote tick=${i} ok=${ok}`);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  res.end();
+});
+
 app.post("/api/agent/extract-folder", async (req, res) => {
-  const { folder_path, method = "agent", template_id = "customs_declaration", task_id: existingTaskId } = req.body;
+  const {
+    folder_path,
+    method = "agent",
+    template_id = "customs_declaration",
+    task_id: existingTaskId,
+    summary_mode = false, // NEW: multi-invoice merged declaration mode
+  } = req.body || {};
+
+  if (!folder_path || typeof folder_path !== "string") {
+    res.status(400).json({ error: "folder_path is required" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -180,10 +393,15 @@ app.post("/api/agent/extract-folder", async (req, res) => {
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+  res.socket?.setNoDelay(true);
 
-  // Track client connection state for graceful disconnect handling
+  // Track client connection state.
+  // IMPORTANT: use res.on('close'), NOT req.on('close') — the latter fires
+  // when the request body is fully consumed by Express (~immediately after
+  // POST body is read), not when the client socket disconnects, which would
+  // incorrectly abort our long-running SSE stream.
   let clientConnected = true;
-  req.on("close", () => { clientConnected = false; });
+  res.on("close", () => { clientConnected = false; });
 
   const send = (event: string, data: unknown) => {
     if (!clientConnected || res.destroyed) return;
@@ -228,6 +446,22 @@ app.post("/api/agent/extract-folder", async (req, res) => {
   };
 
   try {
+    // ── Summary mode: multi-invoice merged declaration via tool orchestration ──
+    if (summary_mode) {
+      await runSummaryModeAgent({
+        folder_path,
+        method,
+        template_id,
+        taskId,
+        send,
+        updateTask,
+      });
+      if (clientConnected && !res.destroyed) {
+        try { res.end(); } catch {}
+      }
+      return;
+    }
+
     // Step 1: Parse all documents in the folder via Python backend
     send("status", { message: "正在解析文件夹中所有文档..." });
     await updateTask({ progress: "正在解析文件夹中所有文档..." });

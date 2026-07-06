@@ -542,10 +542,16 @@ def build_prompt_from_config(
     extraction_fields: List[Dict],
     line_item_fields: List[Dict],
     combined_content: str,
+    summary_mode: bool = False,
+    doc_stats: Optional[Dict] = None,
 ) -> tuple:
     """
     Assemble a (system_prompt, user_prompt) tuple from a structured prompt_config.
     Returns (system_prompt: str, user_prompt: str).
+
+    When summary_mode is True, the prompt instructs the model to merge multiple
+    invoices/packing lists into a single consolidated customs declaration
+    (numeric fields summed, all line items preserved, string fields joined).
     """
     role = prompt_config.get("role", "专业报关员")
     doc_types = prompt_config.get("doc_types", "")
@@ -565,10 +571,24 @@ def build_prompt_from_config(
 
     # --- system prompt ---
     sys_prompt = f"你是一位{role}，擅长从国际物流单据中提取结构化信息。"
+    if summary_mode:
+        sys_prompt += "本次为多票合并申报场景，你需要把多张发票和箱单的数据合并成一份汇总报关单。"
 
     # --- user prompt ---
     parts = []
-    parts.append(f"你是一位{role}，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。")
+    if summary_mode:
+        iv_count = (doc_stats or {}).get("invoice_count", 0)
+        pl_count = (doc_stats or {}).get("packing_list_count", 0)
+        header = (
+            f"你是一位{role}，本次任务为**多票合并申报**："
+            f"以下资料共包含 {iv_count} 张发票（INVOICE）和 {pl_count} 张箱单（PACKING LIST），"
+            f"需要合并为一份汇总的报关单，综合提取 {field_count} 个字段。"
+        )
+        parts.append(header)
+    else:
+        parts.append(
+            f"你是一位{role}，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。"
+        )
 
     if doc_types:
         parts.append(f"\n这套资料包含：{doc_types}。")
@@ -587,10 +607,23 @@ def build_prompt_from_config(
         for i, r in enumerate(enabled_rules, 1):
             parts.append(f"{i}. {r['label']}")
 
+    # Summary-mode-specific merging rules (appended after template rules)
+    if summary_mode:
+        parts.append("\n## 多票合并规则（必须严格遵守）：\n")
+        parts.append("1. **数量类字段累加**：总金额、发票总额、总毛重、总净重、总件数、总体积——把所有发票/箱单中对应的数值**相加**后填入，不能只取其中一票")
+        parts.append("2. **文本类字段合并**：发票号、合同号、发票日期等每票各不相同的字段，用 `/` 连接，例如 `INV001/INV002/INV003`")
+        parts.append("3. **一致性字段取值**：收发货人、贸易方式、运输方式、目的国、币制等三票应当一致的字段，取任一票的值即可；若发现不一致，在数据来源列备注冲突")
+        parts.append("4. **商品明细全部保留**：所有发票的所有明细行必须按发票顺序**纵向全部拼接**到一张商品明细表中，一行都不能省略")
+        parts.append("5. **明细中标注来源发票**：在商品明细表中新增一列「来源发票」，标注该行来自哪张发票（例如 `INV001`）")
+        parts.append("6. **数据来源列写明**：在报关单主要信息表的「数据来源」列注明是来自哪张单据以及是否为累加值（例如 `INV001+INV002+INV003 累加`）")
+
     # Output format
     parts.append("\n## 输出格式要求：\n")
     parts.append("1. 先输出「报关单主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述），字段\"产品编号\"的值填\"见商品明细\"")
-    parts.append(f"2. 再输出「商品明细」表格，列头保留发票中的所有属性列，至少包含：{line_item_cols}")
+    if summary_mode:
+        parts.append(f"2. 再输出「商品明细」表格，列头保留发票中的所有属性列，并额外增加「来源发票」列，至少包含：{line_item_cols}|来源发票")
+    else:
+        parts.append(f"2. 再输出「商品明细」表格，列头保留发票中的所有属性列，至少包含：{line_item_cols}")
 
     weight_dec = fmt.get("weight_decimals", 3)
     volume_dec = fmt.get("volume_decimals", 4)
@@ -700,6 +733,7 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
     try:
         folder_path = input_data.get("folder_path", "")
         file_path = input_data.get("file_path", "")
+        summary_mode = bool(input_data.get("summary_mode", False))
 
         # Determine files to process
         files_to_process = []
@@ -714,6 +748,19 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             return
 
         total_files = len(files_to_process)
+        # Count invoice / packing-list files by filename convention (_IV / _PL suffix)
+        doc_stats = {"invoice_count": 0, "packing_list_count": 0}
+        for fp in files_to_process:
+            up = os.path.basename(fp).upper()
+            if "_IV" in up or "INVOICE" in up:
+                doc_stats["invoice_count"] += 1
+            elif "_PL" in up or "PACKING" in up:
+                doc_stats["packing_list_count"] += 1
+
+        # Only enable summary_mode when there really are multiple files
+        if summary_mode and total_files < 2:
+            summary_mode = False
+
         combined_sections = []
 
         # Step 1+2: Convert and parse each file
@@ -769,7 +816,13 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
         combined_content = "\n".join(combined_sections)
 
         # Step 4: Build prompt from template
-        storage.update_task(task_id, progress="正在构建抽取提示...")
+        if summary_mode:
+            storage.update_task(
+                task_id,
+                progress=f"正在构建汇总模式提示（{doc_stats['invoice_count']} 张发票 + {doc_stats['packing_list_count']} 张箱单）...",
+            )
+        else:
+            storage.update_task(task_id, progress="正在构建抽取提示...")
         template = template_extractor.load_template(template_id)
         if not template:
             template = template_extractor.load_template("customs_declaration")
@@ -783,7 +836,8 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
         prompt_config = template.get("prompt_config") if template else None
         if prompt_config:
             system_prompt, prompt = build_prompt_from_config(
-                prompt_config, extraction_fields, line_item_fields, combined_content
+                prompt_config, extraction_fields, line_item_fields, combined_content,
+                summary_mode=summary_mode, doc_stats=doc_stats,
             )
         else:
             field_table_rows = "\n".join([
@@ -792,14 +846,30 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             ])
             line_item_cols = "|".join([f.get("label", f.get("name", "")) for f in line_item_fields]) if line_item_fields else "序号|产品编号|品名|申报数量|单位|单价|金额|原产国"
 
+            summary_block = ""
+            if summary_mode:
+                iv_count = doc_stats["invoice_count"]
+                pl_count = doc_stats["packing_list_count"]
+                summary_block = (
+                    f"\n\n## 本次为多票合并申报（共 {iv_count} 张发票 + {pl_count} 张箱单）\n"
+                    "合并规则：\n"
+                    "1. 总金额、总毛重、总净重、总件数、总体积等**数量类字段必须累加**所有发票/箱单的对应数值\n"
+                    "2. 发票号、合同号等每票不同的**文本字段用 `/` 拼接**（例如 INV001/INV002）\n"
+                    "3. 收发货人、贸易方式、目的国等**一致字段取任一票的值**，不一致时在数据来源列备注\n"
+                    "4. 所有发票的**商品明细行必须纵向全部拼接**到一张表，一行不能省略；额外增加「来源发票」列标注来源\n"
+                    "5. 数据来源列注明来自哪张单据以及是否为累加值\n"
+                )
+
             prompt_tpl = template.get("prompt_template", "") if template else ""
             if prompt_tpl:
                 prompt = prompt_tpl.replace("{field_count}", str(field_count))
                 prompt = prompt.replace("{field_table}", field_table_rows)
                 prompt = prompt.replace("{line_item_cols}", line_item_cols)
                 prompt = prompt.replace("{content}", combined_content)
+                if summary_block:
+                    prompt = summary_block + "\n" + prompt
             else:
-                prompt = f"""你是一位专业报关员，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。
+                prompt = f"""你是一位专业报关员，请从以下整套报关资料中综合提取报关单所需的{field_count}个字段信息。{summary_block}
 
 ## 需要提取的{field_count}个字段：
 
@@ -809,7 +879,7 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
 
 ## 输出格式要求：
 1. 输出「主要信息」表格（序号|字段|值|置信度|数据来源|来源中原文表述）
-2. 再输出「商品明细」表格，列头至少包含：{line_item_cols}
+2. 再输出「商品明细」表格，列头至少包含：{line_item_cols}{"|来源发票" if summary_mode else ""}
 3. 缺失字段填 null，不得编造
 4. **绝对禁止省略、合并、截断明细行**
 
@@ -817,6 +887,8 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
 {combined_content}"""
 
             system_prompt = (template.get("system_prompt", "") if template else "") or "你是一位专业报关员，擅长从国际物流单据中提取结构化信息。"
+            if summary_mode:
+                system_prompt += "本次为多票合并申报场景，你需要把多张发票和箱单的数据合并成一份汇总报关单。"
 
         # Step 5: Call Qwen directly
         storage.update_task(task_id, progress="正在调用 Qwen 抽取字段...")
@@ -841,6 +913,8 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             "fields": [],
             "line_items": [],
             "field_count": field_count,
+            "summary_mode": summary_mode,
+            "doc_stats": doc_stats,
         }
         storage.update_task(
             task_id,

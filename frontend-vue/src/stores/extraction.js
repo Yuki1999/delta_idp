@@ -11,9 +11,14 @@ export const useExtractionStore = defineStore('extraction', () => {
   const history = ref([])
   const method = ref('standard')
   const templateId = ref('customs_declaration')
+  const summaryMode = ref(false) // 多票汇总模式：把多份发票箱单合并成一份报关单
   const isProcessing = ref(false)
   const statusMsg = ref('')
   const statusType = ref('') // 'loading' | 'success' | 'error'
+
+  // Agent tool-call trace (populated when summary_mode agent is running)
+  // Each entry: { id, name, label, args, status:'running'|'done'|'error', preview, started_at, ended_at }
+  const toolEvents = ref([])
 
   // Tasks (background extraction jobs)
   const tasks = ref([]) // [{ id, status, progress, method, input, created_at, completed_at }]
@@ -116,12 +121,14 @@ export const useExtractionStore = defineStore('extraction', () => {
         input = {
           folder_path: currentFolder.value.path,
           filename: `[资料集] ${currentFolder.value.name}`,
+          summary_mode: summaryMode.value,
         }
       } else if (uploadedFiles.value.length > 0) {
         const file = uploadedFiles.value[0]
         input = {
           file_path: file.file_path,
           filename: file.filename,
+          summary_mode: summaryMode.value,
         }
       }
 
@@ -281,10 +288,13 @@ export const useExtractionStore = defineStore('extraction', () => {
     if (!currentFolder.value) return
 
     isProcessing.value = true
-    statusMsg.value = '正在启动资料集 Agent 抽取...'
+    statusMsg.value = summaryMode.value
+      ? '正在启动多票合并申报 Agent...'
+      : '正在启动资料集 Agent 抽取...'
     statusType.value = 'loading'
     currentResult.value = null
     documentPreview.value = null
+    toolEvents.value = [] // reset tool trace at start of each run
 
     const folderName = currentFolder.value.name
     const folderPath = currentFolder.value.path
@@ -320,6 +330,7 @@ export const useExtractionStore = defineStore('extraction', () => {
         method: method.value,
         template_id: templateId.value,
         task_id: taskId,
+        summary_mode: summaryMode.value,
       }
       fetch('/api/agent/extract-folder', {
         method: 'POST',
@@ -370,6 +381,39 @@ export const useExtractionStore = defineStore('extraction', () => {
             }
             if (data.review_id) {
               reviewId = data.review_id
+            }
+            // ── Tool-call trace (summary-mode agent) ──
+            if (data.tool_call) {
+              const tc = data.tool_call
+              toolEvents.value.push({
+                id: tc.id || `tc_${toolEvents.value.length}`,
+                name: tc.name || '',
+                label: tc.label || tc.name || '',
+                args: tc.args || {},
+                status: 'running',
+                preview: '',
+                started_at: Date.now(),
+              })
+            }
+            if (data.tool_result) {
+              const tr = data.tool_result
+              const evt = toolEvents.value.find(e => e.id === tr.id)
+              if (evt) {
+                evt.status = tr.isError ? 'error' : 'done'
+                evt.preview = tr.preview || ''
+                evt.ended_at = Date.now()
+              } else {
+                // Orphan result (e.g. missed the start event): push a done-only entry
+                toolEvents.value.push({
+                  id: tr.id || `tr_${toolEvents.value.length}`,
+                  name: tr.name || '',
+                  label: tr.label || tr.name || '',
+                  args: {},
+                  status: tr.isError ? 'error' : 'done',
+                  preview: tr.preview || '',
+                  ended_at: Date.now(),
+                })
+              }
             }
           } catch { /* skip */ }
         }
@@ -645,8 +689,9 @@ export const useExtractionStore = defineStore('extraction', () => {
   return {
     uploadedFiles, currentResult, documentPreview, highlightedField,
     templates, templateTree, history, tasks,
-    method, templateId, isProcessing,
+    method, templateId, summaryMode, isProcessing,
     statusMsg, statusType, canExtract, extractionMode,
+    toolEvents,
     sampleFolders, currentFolder,
     folderFiles, activeFolderFileIdx,
     uploadFile, removeFile, clearFiles, uploadDocumentSet,

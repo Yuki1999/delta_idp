@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.5",
     "pdfjs-dist": "^4.8.69",
     "pinia": "^2.3.0",

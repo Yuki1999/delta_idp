@@ -1,6 +1,10 @@
 <template>
   <div class="chat-msg" :class="[role, { system: role === 'system' }]">
-    <div class="avatar">{{ role === 'assistant' ? 'π' : role === 'system' ? '📋' : 'U' }}</div>
+    <div class="avatar">
+      <component v-if="role === 'assistant'" :is="BotIcon" :size="18" :stroke-width="2" />
+      <component v-else-if="role === 'system'" :is="InfoIcon" :size="16" :stroke-width="2" />
+      <span v-else>U</span>
+    </div>
     <div>
       <div class="bubble" v-html="rendered"></div>
       <div class="time" v-if="time">{{ time }}</div>
@@ -11,6 +15,10 @@
 <script setup>
 import { computed } from 'vue'
 import { marked } from 'marked'
+import { Bot, Info } from '@lucide/vue'
+
+const BotIcon = Bot
+const InfoIcon = Info
 
 // Configure marked for safe rendering
 marked.setOptions({ breaks: true, gfm: true })

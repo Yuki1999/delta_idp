@@ -3,21 +3,22 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <section class="panel">
-        <h2 class="panel-title">📤 上传报关资料</h2>
+        <h2 class="panel-title"><Upload :size="14" :stroke-width="2" /> 上传报关资料</h2>
         <UploadZone @files-selected="onFiles" />
         <div class="file-list" v-if="store.uploadedFiles.length">
           <FileChip v-for="(f, i) in store.uploadedFiles" :key="f.file_id" :file="f" @remove="store.removeFile(i)" />
         </div>
         <!-- Mode badge -->
         <div v-if="store.uploadedFiles.length" class="mode-badge" :class="store.extractionMode">
-          <span v-if="store.extractionMode === 'set' && store.summaryMode">📊 汇总模式 — 多张发票箱单合并申报为一份报关单</span>
-          <span v-else-if="store.extractionMode === 'set'">📋 资料集模式 — 将综合抽取22个报关字段</span>
-          <span v-else>📄 单据模式</span>
+          <component :is="store.summaryMode ? BarChart3 : (store.extractionMode === 'set' ? Layers : FileText)" :size="13" :stroke-width="2" />
+          <span v-if="store.extractionMode === 'set' && store.summaryMode">汇总模式 — 多张发票箱单合并申报为一份报关单</span>
+          <span v-else-if="store.extractionMode === 'set'">资料集模式 — 将综合抽取22个报关字段</span>
+          <span v-else>单据模式</span>
         </div>
       </section>
 
       <section class="panel">
-        <h2 class="panel-title">⚙️ 抽取配置</h2>
+        <h2 class="panel-title"><Settings :size="14" :stroke-width="2" /> 抽取配置</h2>
         <div class="form-g">
           <label>抽取模板</label>
           <select v-model="store.templateId" class="select">
@@ -35,33 +36,34 @@
           <label class="checkbox-item">
             <input type="checkbox" v-model="store.summaryMode" />
             <span>
-              <strong>📊 汇总模式</strong>
+              <strong><BarChart3 :size="13" :stroke-width="2" style="vertical-align:-2px;margin-right:4px" /> 汇总模式</strong>
               <small>多张发票箱单合并成一份报关单（金额、毛净重、件数累加，明细全部保留）</small>
             </span>
           </label>
         </div>
         <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
-          🔍 {{ extractBtnText }}
+          <Search :size="15" :stroke-width="2" />
+          <span>{{ extractBtnText }}</span>
         </button>
         <StatusBadge :message="store.statusMsg" :type="store.statusType" />
       </section>
 
       <section class="panel collapsible-panel">
         <h2 class="panel-title clickable" @click="samplePanelOpen = !samplePanelOpen">
-          📋 示例资料
-          <span class="collapse-arrow">{{ samplePanelOpen ? '▲' : '▼' }}</span>
+          <FolderClosed :size="14" :stroke-width="2" /> 示例资料
+          <span class="collapse-arrow"><component :is="samplePanelOpen ? ChevronUp : ChevronDown" :size="12" :stroke-width="2" /></span>
         </h2>
         <template v-if="samplePanelOpen">
           <div v-if="!store.sampleFolders.length" class="no-history">加载中...</div>
           <div v-for="folder in store.sampleFolders" :key="folder.name" class="sample-folder">
             <div class="folder-header" :class="{ active: store.currentFolder?.name === folder.name }" @click="selectSampleFolder(folder)">
-              <span class="folder-icon">{{ expandedFolders.has(folder.name) ? '📂' : '📁' }}</span>
+              <span class="folder-icon"><component :is="expandedFolders.has(folder.name) ? FolderOpen : FolderClosed" :size="14" :stroke-width="2" /></span>
               <span class="folder-name">{{ folder.name }}</span>
               <span class="folder-count">{{ folder.files.length }} 个文件</span>
             </div>
             <div v-if="expandedFolders.has(folder.name)" class="folder-files">
               <div v-for="file in folder.files" :key="file" class="folder-file-item">
-                <span class="file-icon">{{ getFileIcon(file) }}</span>
+                <span class="file-icon"><FileText :size="12" :stroke-width="1.5" /></span>
                 <span class="file-name">{{ file }}</span>
               </div>
             </div>
@@ -70,7 +72,7 @@
       </section>
 
       <section class="panel">
-        <h2 class="panel-title">⚙️ 抽取配置</h2>
+        <h2 class="panel-title"><Settings :size="14" :stroke-width="2" /> 抽取配置</h2>
         <div class="form-g">
           <label>抽取模板</label>
           <select v-model="store.templateId" class="select">
@@ -84,14 +86,24 @@
             <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
           </label>
         </div>
+        <div class="form-g" v-if="store.extractionMode === 'set'">
+          <label class="checkbox-item">
+            <input type="checkbox" v-model="store.summaryMode" />
+            <span>
+              <strong><BarChart3 :size="13" :stroke-width="2" style="vertical-align:-2px;margin-right:4px" /> 汇总模式</strong>
+              <small>多张发票箱单合并成一份报关单（金额、毛净重、件数累加，明细全部保留）</small>
+            </span>
+          </label>
+        </div>
         <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
-          🔍 {{ extractBtnText }}
+          <Search :size="15" :stroke-width="2" />
+          <span>{{ extractBtnText }}</span>
         </button>
         <StatusBadge :message="store.statusMsg" :type="store.statusType" />
       </section>
 
       <section class="panel">
-        <h2 class="panel-title">📜 抽取任务</h2>
+        <h2 class="panel-title"><Clock :size="14" :stroke-width="2" /> 抽取任务</h2>
         <!-- Running tasks -->
         <template v-if="store.tasks.length">
           <div v-for="t in store.tasks" :key="t.id" class="history-item" :class="{ active: store.currentResult?._taskId === t.id, running: t.status === 'running' }" @click="onTaskClick(t)">
@@ -112,7 +124,7 @@
       </section>
 
       <section class="panel">
-        <h2 class="panel-title">📜 抽取历史</h2>
+        <h2 class="panel-title"><History :size="14" :stroke-width="2" /> 抽取历史</h2>
         <div v-if="!store.history.length" class="no-history">暂无历史记录</div>
         <div v-for="h in store.history" :key="h.id" class="history-item" :class="{ active: store.currentResult?._historyId === h.id }" @click="loadHistory(h.id)">
           <div class="hi-header">
@@ -123,7 +135,7 @@
             <span>{{ h.field_count || 0 }} 个字段</span>
             <span>{{ fmtTime(h.created_at) }}</span>
           </div>
-          <button class="hi-del" @click.stop="delHistory(h.id)" title="删除">×</button>
+          <button class="hi-del" @click.stop="delHistory(h.id)" title="删除" aria-label="删除历史记录"><X :size="14" :stroke-width="2" /></button>
         </div>
       </section>
     </aside>
@@ -135,7 +147,7 @@
         <div class="doc-viewer">
           <div class="doc-viewer-header">
             <div class="doc-title-area">
-              <h2>📄 原始文档</h2>
+              <h2><FileText :size="16" :stroke-width="2" /> 原始文档</h2>
               <span class="doc-filename">{{ store.documentPreview?.filename || store.currentResult?.filename || '' }}</span>
             </div>
             <!-- Folder file tabs -->
@@ -145,7 +157,7 @@
                 class="folder-file-tab" :class="{ active: store.activeFolderFileIdx === fi }"
                 @click="switchFolderFile(fi)"
               >
-                <span class="tab-icon">{{ getFileIcon(file.name) }}</span>
+                <span class="tab-icon"><component :is="getFileIcon(file.name)" :size="12" :stroke-width="1.5" /></span>
                 <span class="tab-name">{{ file.name }}</span>
               </button>
             </div>
@@ -215,7 +227,7 @@
         <!-- Fixed Field Panel (right side) -->
         <aside class="field-panel">
           <div class="field-panel-header">
-            <h3>📋 提取结果</h3>
+            <h3><Layers :size="15" :stroke-width="2" /> 提取结果</h3>
             <span class="field-count" v-if="parsedFields.length">{{ parsedFields.length }} 个字段</span>
           </div>
           <div class="field-panel-list">
@@ -225,9 +237,9 @@
                 <!-- Line items: multi-row field -->
                 <div v-if="f.type === 'lineItems'" class="field-row field-row-lineitems" :class="{ expanded: lineItemsExpanded }">
                   <div class="field-row-header" @click="lineItemsExpanded = !lineItemsExpanded">
-                    <div class="field-row-label">📦 {{ f.name }}</div>
+                    <div class="field-row-label"><Package :size="13" :stroke-width="2" style="vertical-align:-2px;margin-right:4px" />{{ f.name }}</div>
                     <div class="field-row-value">{{ f.value }}</div>
-                    <span class="expand-toggle">{{ lineItemsExpanded ? '▲' : '▼' }}</span>
+                    <span class="expand-toggle"><component :is="lineItemsExpanded ? ChevronUp : ChevronDown" :size="11" :stroke-width="2" /></span>
                   </div>
                   <div v-if="lineItemsExpanded" class="lineitems-table-wrapper">
                     <table class="lineitems-table">
@@ -285,7 +297,11 @@
               :class="ev.status"
             >
               <span class="tool-icon">
-                {{ ev.status === 'done' ? '✓' : ev.status === 'error' ? '✗' : '⏳' }}
+                <component
+                  :is="ev.status === 'done' ? Check : (ev.status === 'error' ? X : Loader2)"
+                  :size="14"
+                  :stroke-width="2.5"
+                />
               </span>
               <div class="tool-body">
                 <div class="tool-head">
@@ -317,7 +333,7 @@
           </div>
         </div>
         <div v-else class="empty-state">
-          <div class="empty-icon">📊</div>
+          <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1" /></div>
           <h2>报关资料抽取</h2>
           <p>上传单据或整套报关资料，系统将自动识别模式并提取关键字段</p>
           <p class="empty-sub">支持拖放多个文件或从示例资料中选择</p>
@@ -335,6 +351,11 @@ import UploadZone from '../components/UploadZone.vue'
 import FileChip from '../components/FileChip.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import PdfViewer from '../components/PdfViewer.vue'
+import {
+  Upload, Settings, FolderClosed, FolderOpen, History, Clock,
+  Search, BarChart3, FileText, FileSpreadsheet, Layers, Package,
+  ChevronUp, ChevronDown, Loader2, Check, X,
+} from '../components/icons.js'
 
 function renderMarkdown(md) {
   if (!md) return ''
@@ -525,10 +546,8 @@ function selectSampleFolder(folder) {
 }
 
 function getFileIcon(filename) {
-  if (filename.endsWith('.xlsx') || filename.endsWith('.xls')) return '📊'
-  if (filename.endsWith('.txt')) return '📄'
-  if (filename.endsWith('.pdf')) return '📄'
-  return '📄'
+  if (filename.endsWith('.xlsx') || filename.endsWith('.xls')) return FileSpreadsheet
+  return FileText
 }
 
 async function switchFolderFile(idx) {
@@ -743,7 +762,7 @@ async function onTaskClick(task) {
 .folder-file-tab { display: flex; align-items: center; gap: 4px; padding: 5px 12px; font-size: 11px; border: 1px solid var(--c-gray-200); border-bottom: none; border-radius: 6px 6px 0 0; background: var(--c-gray-50); color: var(--c-gray-600); cursor: pointer; transition: all .15s; white-space: nowrap; }
 .folder-file-tab.active { background: white; color: var(--c-primary); font-weight: 600; border-color: var(--c-primary); border-bottom: 2px solid var(--c-primary); }
 .folder-file-tab:hover:not(.active) { background: var(--c-gray-100); color: var(--c-gray-800); }
-.folder-file-tab .tab-icon { font-size: 12px; }
+.folder-file-tab .tab-icon { display: inline-flex; align-items: center; }
 .folder-file-tab .tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 
 .doc-viewer-body { flex: 1; overflow: auto; }
@@ -787,7 +806,7 @@ async function onTaskClick(task) {
 
 .field-row { padding: 10px 12px; border-radius: var(--radius); cursor: pointer; transition: all .12s; border: 1px solid transparent; margin-bottom: 2px; }
 .field-row:hover { background: var(--c-gray-50); border-color: var(--c-gray-200); }
-.field-row.active { background: #fffbeb; border-color: #f59e0b; }
+.field-row.active { background: var(--c-primary-light); border-color: var(--c-primary); }
 .field-row-label { font-size: 11px; font-weight: 600; color: var(--c-gray-500); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
 .field-row-value { font-size: 13px; font-weight: 600; color: var(--c-gray-900); word-break: break-all; line-height: 1.4; }
 .field-row-value.empty { color: var(--c-gray-400); font-style: italic; font-weight: 400; }
@@ -813,7 +832,7 @@ async function onTaskClick(task) {
 .lineitems-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .lineitems-table th { background: var(--c-gray-50); padding: 6px 8px; text-align: left; font-weight: 600; color: var(--c-gray-600); border-bottom: 1px solid var(--c-gray-200); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
 .lineitems-table td { padding: 5px 8px; border-bottom: 1px solid var(--c-gray-100); color: var(--c-gray-800); white-space: nowrap; }
-.lineitems-table tr:hover td { background: #fffbeb; }
+.lineitems-table tr:hover td { background: var(--c-gray-50); }
 .field-row-lineitems.expanded { border-color: var(--c-primary); }
 
 /* ─── Markdown Result ───────────────────────── */
@@ -826,8 +845,9 @@ async function onTaskClick(task) {
 .markdown-result :deep(table) { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
 .markdown-result :deep(th) { background: var(--c-gray-100); padding: 6px 8px; border: 1px solid var(--c-gray-200); text-align: left; font-weight: 600; white-space: nowrap; }
 .markdown-result :deep(td) { padding: 5px 8px; border: 1px solid var(--c-gray-200); word-break: break-all; }
-.markdown-result :deep(tr:hover td) { background: #fffbeb; }
-.markdown-result :deep(code) { background: var(--c-gray-100); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+.markdown-result :deep(tr:hover td) { background: var(--c-gray-50); }
+.markdown-result :deep(code) { background: var(--c-gray-100); padding: 1px 4px; border-radius: 3px; font-size: 12px; font-family: var(--font-mono); }
+.markdown-result :deep(td) { font-variant-numeric: tabular-nums; }
 .markdown-result :deep(strong) { font-weight: 700; }
 .markdown-result :deep(hr) { border: none; border-top: 1px solid var(--c-gray-200); margin: 12px 0; }
 .markdown-result :deep(ul), .markdown-result :deep(ol) { padding-left: 18px; margin: 4px 0; }
@@ -837,7 +857,7 @@ async function onTaskClick(task) {
 /* ─── Empty State ─────────────────────────────── */
 .content-empty { flex: 1; display: flex; align-items: center; justify-content: center; }
 .empty-state { text-align: center; padding: 80px 20px; color: var(--c-gray-400); }
-.empty-icon { font-size: 56px; margin-bottom: 12px; }
+.empty-icon { color: var(--c-gray-300); margin-bottom: 12px; display: flex; justify-content: center; }
 .empty-state h2 { font-size: 20px; font-weight: 700; color: var(--c-gray-600); margin-bottom: 8px; }
 .empty-state p { font-size: 14px; }
 .empty-sub { font-size: 12px; color: var(--c-gray-300); margin-top: 4px; }
@@ -881,14 +901,11 @@ async function onTaskClick(task) {
 .tool-step.done { border-left-color: #22c55e; }
 .tool-step.error { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }
 .tool-icon {
-  font-size: 16px;
-  line-height: 20px;
-  min-width: 20px;
-  text-align: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; flex-shrink: 0;
 }
-.tool-step.running .tool-icon {
-  animation: spin 1.5s linear infinite;
-  display: inline-block;
+.tool-step.running .tool-icon :deep(svg) {
+  animation: spin 1.2s linear infinite;
 }
 .tool-step.done .tool-icon { color: #16a34a; }
 .tool-step.error .tool-icon { color: #dc2626; }
@@ -928,7 +945,8 @@ async function onTaskClick(task) {
 
 /* ─── Sidebar Components ──────────────────────── */
 .panel { background: white; border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg); padding: 14px; }
-.panel-title { font-size: 13px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.panel-title :deep(svg) { flex-shrink: 0; }
 .file-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .form-g { margin-bottom: 10px; }
 .form-g label { display: block; font-size: 11px; font-weight: 600; color: var(--c-gray-500); text-transform: uppercase; margin-bottom: 4px; letter-spacing: .5px; }
@@ -943,10 +961,11 @@ async function onTaskClick(task) {
 .checkbox-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--c-primary); }
 .checkbox-item strong { display: block; font-size: 12px; color: var(--c-gray-800); }
 .checkbox-item small { display: block; font-size: 10px; color: var(--c-gray-500); margin-top: 2px; }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all .15s; }
-.btn.primary { background: var(--c-primary); color: white; }
-.btn.primary:hover { background: var(--c-primary-dark); }
-.btn.primary:disabled { background: var(--c-gray-300); color: var(--c-gray-500); cursor: not-allowed; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all var(--t-normal); }
+.btn.primary { background: var(--c-primary); color: white; box-shadow: var(--shadow-sm); }
+.btn.primary:hover { background: var(--c-primary-dark); box-shadow: var(--shadow-md); }
+.btn.primary:active { transform: scale(.98); }
+.btn.primary:disabled { background: var(--c-gray-300); color: var(--c-gray-500); cursor: not-allowed; box-shadow: none; transform: none; }
 .btn.full { width: 100%; }
 .sample-btn { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: none; border: none; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--c-gray-700); text-align: left; width: 100%; transition: all .15s; }
 .sample-btn:hover { background: var(--c-gray-100); }
@@ -961,9 +980,9 @@ async function onTaskClick(task) {
 .hi-file { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .hi-method { font-size: 9px; color: var(--c-primary); background: var(--c-primary-light); padding: 1px 5px; border-radius: 6px; }
 .hi-meta { display: flex; gap: 6px; font-size: 10px; color: var(--c-gray-400); }
-.hi-del { background: none; border: none; color: var(--c-gray-400); cursor: pointer; font-size: 14px; opacity: 0; transition: opacity .1s; }
+.hi-del { background: none; border: none; color: var(--c-gray-400); cursor: pointer; display: inline-flex; align-items: center; padding: 2px; border-radius: 4px; opacity: 0; transition: opacity var(--t-fast), color var(--t-fast), background var(--t-fast); }
 .history-item:hover .hi-del { opacity: 1; }
-.hi-del:hover { color: var(--c-danger); }
+.hi-del:hover { color: var(--c-danger); background: var(--c-danger-light); }
 
 /* ─── Task status ───────────────────────────── */
 .history-item.running { border-left: 3px solid var(--c-primary); }
@@ -988,7 +1007,8 @@ async function onTaskClick(task) {
 .folder-action { margin-top: 8px; }
 
 /* Mode Badge */
-.mode-badge { margin-top: 10px; padding: 8px 12px; border-radius: var(--radius); font-size: 11px; font-weight: 600; text-align: center; }
+.mode-badge { margin-top: 10px; padding: 8px 12px; border-radius: var(--radius); font-size: 11px; font-weight: 600; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.mode-badge :deep(svg) { flex-shrink: 0; }
 .mode-badge.set { background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd; }
 .mode-badge.single { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
 

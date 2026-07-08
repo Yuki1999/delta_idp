@@ -2,16 +2,16 @@
   <div class="agent-layout">
     <!-- Left Column: Sessions + Upload + Settings -->
     <aside class="sessions-col">
-      <h3 class="sec-title">💬 会话</h3>
+      <h3 class="sec-title"><MessageSquare :size="13" :stroke-width="2" style="vertical-align:-2px" /> 会话</h3>
       <div class="session-list">
         <div v-for="s in agent.sessions" :key="s.id" class="session-item" :class="{ active: s.id === agent.activeSessionId }" @click="switchSession(s.id)">
           <span class="sess-name">{{ s.name }}</span>
           <span class="sess-count">{{ s.message_count }}</span>
-          <button class="sess-del" @click.stop="delSession(s.id)" title="删除">×</button>
+          <button class="sess-del" @click.stop="delSession(s.id)" title="删除" aria-label="删除会话"><X :size="14" :stroke-width="2" /></button>
         </div>
         <div v-if="!agent.sessions.length" class="no-files">暂无会话</div>
       </div>
-      <button class="btn-dashed" @click="newSession">+ 新建会话</button>
+      <button class="btn-dashed" @click="newSession"><Plus :size="14" :stroke-width="2" /> 新建会话</button>
 
       <hr class="divider" />
 
@@ -33,7 +33,7 @@
       @drop.prevent="onDrop"
     >
       <div v-if="dragOver" class="drag-overlay">
-        <div class="drag-hint">📂 释放文件以上传</div>
+        <div class="drag-hint"><UploadCloud :size="28" :stroke-width="1.5" /> 释放文件以上传</div>
       </div>
       <div class="chat-msgs" ref="chatContainer">
         <div v-if="!agent.messages.length && !agent.isProcessing" class="welcome">
@@ -65,6 +65,7 @@ import { ref, nextTick, onMounted } from 'vue'
 import { useAgentStore } from '../stores/agent.js'
 import ChatBubble from '../components/ChatBubble.vue'
 import ChatInput from '../components/ChatInput.vue'
+import { MessageSquare, Plus, X, UploadCloud } from '../components/icons.js'
 
 const agent = useAgentStore()
 const chatContainer = ref(null)
@@ -137,30 +138,30 @@ onMounted(async () => {
 
 /* ─── Left Column ─────────────────────────────── */
 .sessions-col { background: white; border-right: 1px solid var(--c-gray-200); padding: 16px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--c-gray-400); margin-bottom: 4px; }
+.sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--c-gray-400); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
 .no-files { font-size: 12px; color: var(--c-gray-400); padding: 8px; }
 .divider { border: none; border-top: 1px solid var(--c-gray-200); margin: 4px 0; }
-.btn-dashed { width: 100%; padding: 10px; border: 2px dashed var(--c-gray-300); border-radius: var(--radius); background: none; cursor: pointer; font-size: 13px; color: var(--c-gray-500); transition: all .15s; }
+.btn-dashed { width: 100%; padding: 10px; border: 2px dashed var(--c-gray-300); border-radius: var(--radius); background: none; cursor: pointer; font-size: 13px; color: var(--c-gray-500); transition: all var(--t-fast); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-dashed:hover { border-color: var(--c-primary); color: var(--c-primary); background: var(--c-primary-light); }
 .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; color: var(--c-gray-600); }
 
 /* ─── Sessions ────────────────────────────────── */
 .session-list { display: flex; flex-direction: column; gap: 4px; }
-.session-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all .1s; }
+.session-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all var(--t-fast); }
 .session-item:hover { background: var(--c-gray-100); }
 .session-item.active { background: var(--c-primary-light); color: var(--c-primary); }
 .sess-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .sess-count { font-size: 10px; background: var(--c-gray-200); color: var(--c-gray-500); padding: 1px 6px; border-radius: 10px; }
 .session-item.active .sess-count { background: var(--c-primary); color: white; }
-.sess-del { background: none; border: none; color: var(--c-gray-400); cursor: pointer; font-size: 14px; opacity: 0; }
+.sess-del { background: none; border: none; color: var(--c-gray-400); cursor: pointer; display: inline-flex; align-items: center; padding: 2px; border-radius: 4px; opacity: 0; transition: all var(--t-fast); }
 .session-item:hover .sess-del { opacity: 1; }
-.sess-del:hover { color: var(--c-danger); }
+.sess-del:hover { color: var(--c-danger); background: var(--c-danger-light); }
 
 /* ─── Chat Area ───────────────────────────────── */
 .chat-area { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; position: relative; }
 .chat-area.drag-over { outline: 3px dashed var(--c-primary); outline-offset: -8px; }
 .drag-overlay { position: absolute; inset: 0; z-index: 50; background: rgba(37,99,235,.06); display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.drag-hint { background: white; padding: 24px 48px; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); font-size: 18px; font-weight: 600; color: var(--c-primary); }
+.drag-hint { background: white; padding: 24px 48px; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); font-size: 18px; font-weight: 600; color: var(--c-primary); display: flex; align-items: center; gap: 10px; }
 .chat-msgs { flex: 1; min-height: 0; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
 .welcome { text-align: center; padding: 80px 20px; }
 .welcome-icon { width: 80px; height: 80px; border-radius: 24px; background: linear-gradient(135deg, var(--c-primary), var(--c-purple)); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: white; font-size: 36px; }

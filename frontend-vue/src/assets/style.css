@@ -30,6 +30,33 @@
   --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.1);
   --font-sans: 'Inter','Noto Sans SC',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --font-mono: 'JetBrains Mono','Fira Code',monospace;
+
+  /* ─── Spacing scale (4/8 rhythm, Material Design) ─── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ─── Transition tokens (150-300ms per MD motion) ─── */
+  --t-fast: 120ms ease-out;
+  --t-normal: 200ms ease-out;
+  --t-slow: 300ms cubic-bezier(.4,0,.2,1);
+
+  /* ─── Z-index layered scale ─── */
+  --z-base: 0;
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-overlay: 40;
+  --z-modal: 100;
+  --z-toast: 1000;
+
+  /* ─── Focus ring (a11y) ─── */
+  --focus-ring: 0 0 0 3px rgba(37,99,235,.35);
 }
 
 *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -43,6 +70,30 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
+
+/* ─── Global Accessibility & Interaction ─────────────────────────── */
+
+/* Visible focus for keyboard users (focus-states rule) */
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius); }
+
+/* Cursor affordance (cursor-pointer rule) */
+button, [role="button"], .clickable, [tabindex]:not([tabindex="-1"]) { cursor: pointer; }
+
+/* Disabled clarity (disabled-states rule) */
+button:disabled, [role="button"][aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+
+/* Respect reduced motion (reduced-motion rule) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Tabular numerals for data columns (number-tabular rule) */
+.tabular-nums { font-variant-numeric: tabular-nums; }
 
 /* ─── Scrollbar ─────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

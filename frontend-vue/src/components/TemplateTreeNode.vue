@@ -5,14 +5,17 @@
         <svg :class="{ rotated: isOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"/></svg>
       </span>
       <span v-else class="t-arrow"></span>
-      <span class="t-icon">{{ node.is_group ? (isOpen ? '📂' : '📁') : '📄' }}</span>
+      <span class="t-icon">
+        <component v-if="node.is_group" :is="isOpen ? FolderOpen : FolderClosed" :size="14" :stroke-width="1.5" />
+        <FileText v-else :size="14" :stroke-width="1.5" />
+      </span>
       <span class="t-name">{{ node.name }}</span>
       <span v-if="node.vendor && node.vendor !== 'generic'" class="t-badge">{{ node.vendor }}</span>
       <span v-if="node.is_group" class="t-count">{{ node.children?.length || 0 }}</span>
       <span class="t-actions" v-if="!node.is_group">
-        <button class="act-btn" @click.stop="$emit('edit', node)" title="编辑">✏️</button>
-        <button class="act-btn" @click.stop="$emit('duplicate', node)" title="复制">📋</button>
-        <button class="act-btn danger" @click.stop="$emit('delete', node)" title="删除">🗑️</button>
+        <button class="act-btn" @click.stop="$emit('edit', node)" title="编辑" aria-label="编辑"><Pencil :size="12" :stroke-width="1.5" /></button>
+        <button class="act-btn" @click.stop="$emit('duplicate', node)" title="复制" aria-label="复制"><Copy :size="12" :stroke-width="1.5" /></button>
+        <button class="act-btn danger" @click.stop="$emit('delete', node)" title="删除" aria-label="删除"><Trash2 :size="12" :stroke-width="1.5" /></button>
       </span>
     </div>
     <ul v-if="node.children && node.children.length && isOpen" class="t-children">
@@ -30,6 +33,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { FolderOpen, FolderClosed, FileText, Pencil, Copy, Trash2 } from './icons.js'
 const props = defineProps({ node: Object, depth: { type: Number, default: 0 }, selectedId: String })
 const emit = defineEmits(['select', 'edit', 'duplicate', 'delete'])
 
@@ -49,21 +53,21 @@ watch(() => props.selectedId, () => {
 
 <style scoped>
 .t-node { list-style: none; user-select: none; }
-.t-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all .1s; }
+.t-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all var(--t-fast); }
 .t-row:hover { background: var(--c-gray-100); }
 .t-row.selected { background: var(--c-primary-light); color: var(--c-primary); }
 .t-row.is-group { font-weight: 600; }
 .t-arrow { width: 14px; display: inline-flex; align-items: center; }
-.t-arrow svg { transition: transform .2s; }
+.t-arrow svg { transition: transform var(--t-normal); }
 .t-arrow svg.rotated { transform: rotate(90deg); }
-.t-icon { font-size: 14px; }
+.t-icon { display: inline-flex; align-items: center; color: var(--c-gray-500); }
 .t-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .t-badge { font-size: 10px; padding: 1px 6px; background: var(--c-primary-light); color: var(--c-primary); border-radius: 10px; font-weight: 600; }
 .t-count { font-size: 11px; color: var(--c-gray-400); }
-.t-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.t-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--t-fast); }
 .t-row:hover .t-actions { opacity: 1; }
-.act-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; }
-.act-btn:hover { background: var(--c-gray-200); }
-.act-btn.danger:hover { background: var(--c-danger-light); }
+.act-btn { background: none; border: none; cursor: pointer; padding: 3px; border-radius: 4px; display: inline-flex; align-items: center; color: var(--c-gray-500); transition: all var(--t-fast); }
+.act-btn:hover { background: var(--c-gray-200); color: var(--c-gray-800); }
+.act-btn.danger:hover { background: var(--c-danger-light); color: var(--c-danger); }
 .t-children { margin: 0; padding: 0; }
 </style>

@@ -4,9 +4,9 @@
       <button v-for="qa in quickActions" :key="qa" class="qa-btn" @click="$emit('quick-action', qa)">{{ qa }}</button>
     </div>
     <div v-if="activeFile" class="active-file-chip">
-      <span class="chip-icon">📄</span>
+      <span class="chip-icon"><FileText :size="13" :stroke-width="1.5" /></span>
       <span class="chip-name">{{ activeFile.filename }}</span>
-      <button class="chip-close" @click="$emit('remove-file')">×</button>
+      <button class="chip-close" @click="$emit('remove-file')" aria-label="移除文件"><X :size="13" :stroke-width="2" /></button>
     </div>
     <div class="input-row">
       <textarea
@@ -27,6 +27,7 @@
 
 <script setup>
 import { ref, nextTick } from 'vue'
+import { FileText, X } from './icons.js'
 defineProps({ disabled: Boolean, quickActions: { type: Array, default: () => [] }, activeFile: Object })
 const emit = defineEmits(['send', 'quick-action', 'remove-file'])
 
@@ -70,8 +71,8 @@ textarea:focus { outline: none; border-color: var(--c-primary); box-shadow: 0 0 
 .qa-btn { padding: 6px 14px; background: var(--c-primary-light); color: var(--c-primary); border: none; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all .15s; white-space: nowrap; }
 .qa-btn:hover { background: var(--c-primary); color: white; }
 .active-file-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; margin-bottom: 8px; background: var(--c-primary-light); border: 1px solid var(--c-primary); border-radius: var(--radius); font-size: 12px; }
-.chip-icon { font-size: 12px; }
+.chip-icon { display: inline-flex; align-items: center; }
 .chip-name { font-weight: 500; color: var(--c-primary); }
-.chip-close { background: none; border: none; color: var(--c-primary); cursor: pointer; font-size: 14px; padding: 0 2px; }
-.chip-close:hover { color: var(--c-primary-dark); }
+.chip-close { background: none; border: none; color: var(--c-primary); cursor: pointer; padding: 2px; border-radius: 4px; display: inline-flex; align-items: center; transition: all var(--t-fast); }
+.chip-close:hover { color: var(--c-primary-dark); background: rgba(37,99,235,.1); }
 </style>

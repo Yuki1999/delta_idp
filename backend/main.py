@@ -19,8 +19,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+import httpx
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -69,8 +70,13 @@ def get_qwen():
         qwen_extractor = QwenExtractor()
     return qwen_extractor
 
-# Frontend directory
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+# Frontend directory (Vite build output of the Vue SPA)
+FRONTEND_DIR = os.environ.get(
+    "FRONTEND_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend-vue", "dist"),
+)
+# Static assets (JS/CSS/etc.) produced by `vite build`
+FRONTEND_ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
 
 
 # ─── API Endpoints ───────────────────────────────────────────────────────────
@@ -990,166 +996,67 @@ async def save_history(entry: Dict[str, Any]):
     return {"status": "saved", "id": entry_id}
 
 
-# ─── Agent Sessions API ──────────────────────────────────────────────────────
+# ─── Agent API (reverse-proxy to agent-pi service) ───────────────────────────
+#
+# All /api/agent/* requests are proxied to the agent-pi service (Express + SSE).
+# agent-pi provides streaming chat, session management and the pi-agent-core
+# powered extraction workflow. Backend no longer implements these endpoints
+# directly (the old non-streaming versions have been superseded).
 
-@app.get("/api/agent/sessions")
-async def list_sessions():
-    """List all agent sessions."""
-    sessions = storage.list_agent_sessions()
-    return {"sessions": sessions}
-
-
-@app.post("/api/agent/sessions")
-async def create_session(data: Dict[str, Any] = None):
-    """Create a new agent session."""
-    name = (data or {}).get("name", "新会话")
-    session = storage.create_agent_session(name)
-    return session
+AGENT_PI_URL = os.environ.get("AGENT_PI_URL", "http://localhost:3002")
 
 
-@app.get("/api/agent/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get a full agent session with messages."""
-    session = storage.get_agent_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+@app.api_route(
+    "/api/agent/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+)
+async def proxy_agent(request: Request, path: str):
+    """Reverse-proxy /api/agent/* to the agent-pi service.
 
-
-@app.put("/api/agent/sessions/{session_id}")
-async def update_session(session_id: str, data: Dict[str, Any]):
-    """Update session name or messages."""
-    messages = data.get("messages")
-    name = data.get("name")
-    result = storage.update_agent_session(session_id, messages=messages, name=name)
-    if not result:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return result
-
-
-@app.delete("/api/agent/sessions/{session_id}")
-async def delete_session(session_id: str):
-    """Delete an agent session."""
-    success = storage.delete_agent_session(session_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"status": "deleted"}
-
-
-# ─── Agent Chat (updated with session persistence) ───────────────────────────
-
-@app.post("/api/agent/chat")
-async def agent_chat(
-    message: str = Form(...),
-    history: str = Form(default="[]"),  # JSON array of previous messages
-    document_context: str = Form(default=""),  # Optional: current document text
-    use_qwen: bool = Form(default=True),
-    session_id: str = Form(default=""),
-):
+    Streams the response body so SSE (text/event-stream) works end-to-end.
     """
-    Agent chat endpoint for document Q&A with session persistence.
-    Uses Qwen to answer questions about documents.
-    """
-    import json as json_mod
-    try:
-        chat_history = json_mod.loads(history)
-    except json.JSONDecodeError:
-        chat_history = []
+    target = f"{AGENT_PI_URL}/api/agent/{path}"
+    # Forward query string
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
 
-    system_prompt = """你是Delta IDP智能助手，专门帮助用户处理国际物流单据（发票和装箱单）。
+    body = await request.body()
 
-你的能力包括：
-1. 解释单据中的字段含义
-2. 帮助用户理解提取的信息
-3. 回答关于报关资料的问题
-4. 指导用户如何使用系统
-
-请用专业、友好的中文回答。"""
-
-    if document_context:
-        system_prompt += f"\n\n当前处理的单据内容：\n{document_context[:3000]}"
-
-    # Build messages
-    messages = [{"role": "system", "content": system_prompt}]
-    for msg in chat_history[-10:]:
-        messages.append(msg)
-    messages.append({"role": "user", "content": message})
-
-    if use_qwen:
-        try:
-            response = get_qwen().client.chat.completions.create(
-                model=get_qwen().model,
-                messages=messages,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            reply = response.choices[0].message.content.strip()
-        except Exception as e:
-            reply = f"[Qwen API 暂时不可用] {str(e)}"
-    else:
-        reply = "当前使用离线模式，我无法回答复杂问题。请上传单据文件开始提取。"
-
-    # Persist to session if session_id provided
-    if session_id:
-        full_messages = list(chat_history) + [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": reply},
-        ]
-        storage.update_agent_session(session_id, messages=full_messages)
-
-    return {
-        "reply": reply,
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-@app.post("/api/agent/extract")
-async def agent_extract(
-    message: str = Form(...),
-    file_path: str = Form(default=""),
-):
-    """
-    Agent-driven extraction: natural language instruction for extraction.
-    Example: "提取发票号码和总金额" or "列出所有产品编号"
-    """
-    if not file_path or not os.path.exists(file_path):
-        return {"reply": "请先上传一个单据文件。", "extraction": None}
-
-    # Parse the document
-    structured_data = parse_xlsx_to_structured_text(file_path)
-    plain_text = xlsx_to_plain_text(file_path)
-
-    # Use Qwen to understand user's intent and extract accordingly
-    prompt = f"""用户要求：{message}
-
-请根据用户的要求，从以下单据内容中提取信息，以JSON格式返回。
-
-单据内容：
-{plain_text[:4000]}
-
-请返回JSON格式：
-{{"reply": "对用户要求的理解", "extraction": {{"fields": [{{"name": "字段名", "value": "值"}}]}} }}"""
-
-    try:
-        response = get_qwen().client.chat.completions.create(
-            model=get_qwen().model,
-            messages=[
-                {"role": "system", "content": "你是一个单据信息抽取助手。根据用户自然语言指令提取信息。"},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2048,
-            temperature=0.1,
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        upstream_req = client.build_request(
+            request.method,
+            target,
+            headers={
+                k: v for k, v in request.headers.items()
+                if k.lower() not in ("host", "content-length", "transfer-encoding")
+            },
+            content=body if body else None,
         )
-        content = response.choices[0].message.content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.endswith("```"):
-            content = content[:-3]
-        result = json.loads(content)
-    except Exception as e:
-        result = {"reply": f"抽取过程出错: {e}", "extraction": None}
+        upstream = await client.send(upstream_req, stream=True)
 
-    return result
+        # Filter hop-by-hop headers
+        hop_by_hop = {
+            "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+            "te", "trailers", "transfer-encoding", "upgrade", "content-length",
+            "content-encoding",
+        }
+        resp_headers = {
+            k: v for k, v in upstream.headers.items()
+            if k.lower() not in hop_by_hop
+        }
+
+        async def body_iter():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+
+        return StreamingResponse(
+            body_iter(),
+            status_code=upstream.status_code,
+            headers=resp_headers,
+        )
 
 
 # ─── Document Preview & Serve ─────────────────────────────────────────────────
@@ -1412,36 +1319,40 @@ async def extract_folder(folder_path: str = Form(...)):
     }
 
 
-# ─── Frontend Serving ────────────────────────────────────────────────────────
+# ─── Frontend Serving (Vue SPA build output) ─────────────────────────────────
+
+# Serve Vite build assets (hashed JS/CSS/images under /assets/)
+if os.path.isdir(FRONTEND_ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="assets")
+
+
+def _spa_index() -> FileResponse:
+    """Return the SPA index.html for client-side routing."""
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Frontend not built. Run `npm run build` in frontend-vue/.")
+
 
 @app.get("/")
 async def serve_index():
-    """Serve the main demo page."""
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    """Serve the SPA entry point."""
+    return _spa_index()
 
 
-@app.get("/agent")
-async def serve_agent():
-    """Serve the agent page."""
-    return FileResponse(os.path.join(FRONTEND_DIR, "agent.html"))
-
-
-@app.get("/css/{filename}")
-async def serve_css(filename: str):
-    """Serve CSS files."""
-    path = os.path.join(FRONTEND_DIR, "css", filename)
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="File not found")
-
-
-@app.get("/js/{filename}")
-async def serve_js(filename: str):
-    """Serve JS files."""
-    path = os.path.join(FRONTEND_DIR, "js", filename)
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="File not found")
+# SPA history fallback: any non-API, non-asset GET returns index.html so that
+# client-side routes (e.g. /agent, /templates) survive a hard refresh.
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    # Never intercept API calls or mounted static dirs
+    if full_path.startswith("api/") or full_path.startswith("assets/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    # If the path maps to a real file in the dist dir, serve it directly
+    candidate = os.path.join(FRONTEND_DIR, full_path)
+    if full_path and os.path.isfile(candidate):
+        return FileResponse(candidate)
+    # Otherwise fall back to the SPA shell
+    return _spa_index()
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1452,4 +1363,9 @@ async def serve_js(filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8080, reload=True)
+    uvicorn.run(
+        "backend.main:app",
+        host=os.environ.get("HOST", "0.0.0.0"),
+        port=int(os.environ.get("PORT", "16005")),
+        reload=bool(os.environ.get("RELOAD", "")),
+    )

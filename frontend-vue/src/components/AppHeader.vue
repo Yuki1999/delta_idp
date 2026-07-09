@@ -11,6 +11,7 @@
 
       <nav class="main-nav">
         <router-link to="/" class="nav-link" active-class="active">单据抽取</router-link>
+        <router-link to="/agent" class="nav-link" active-class="active">智能助手</router-link>
         <router-link to="/templates" class="nav-link" active-class="active">模板管理</router-link>
       </nav>
 

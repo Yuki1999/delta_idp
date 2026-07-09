@@ -162,30 +162,27 @@ const listTemplatesTool: AgentTool = {
   name: "list_extraction_templates",
   label: "列出抽取模板",
   description:
-    "列出系统中所有可用的单据抽取模板，包括模板ID、名称、适用单据类型和厂商。" +
-    "用于在抽取前确定应该使用哪个模板。返回按单据类型分组的模板树。",
+    "列出系统中所有可用的单据抽取模板（模板ID、名称、字段数、说明）。" +
+    "用于在抽取前确定应该使用哪个模板，或回答用户“有哪些模板”。无参数。",
   parameters: Type.Object({}),
   async execute(_toolCallId, _params) {
     try {
       const resp = await backendFetch(`${BACKEND_URL}/api/templates/tree`);
       if (!resp.ok) throw new Error(`Backend error: ${resp.status}`);
       const data = await resp.json();
-      const tree = data.tree || [];
-      // Format a readable summary
-      const lines = ["当前系统可用的抽取模板：", ""];
-      for (const group of tree) {
-        const docType = group.document_type === "invoice" ? "发票 (Invoice)" : "装箱单 (Packing List)";
-        lines.push(`## ${docType}`);
-        for (const tpl of group.children || []) {
-          const vendorLabel = tpl.vendor === "generic" ? "通用" : `厂商: ${tpl.vendor}`;
-          lines.push(`- **${tpl.id}**: ${tpl.name} (${vendorLabel})`);
-          if (tpl.description) lines.push(`  ${tpl.description}`);
-        }
-        lines.push("");
+      // Tree is a flat list of templates (id/name/description/field_count).
+      const tpls = (data.tree || []).filter((t: any) => !t.is_group);
+      if (!tpls.length) {
+        return { content: [{ type: "text", text: "系统中暂无可用的抽取模板。" }], details: { templates: [] } };
+      }
+      const lines = [`系统中共有 ${tpls.length} 个可用抽取模板：`, ""];
+      for (const tpl of tpls) {
+        lines.push(`- **${tpl.id}**：${tpl.name}（${tpl.field_count || 0} 个字段）`);
+        if (tpl.description) lines.push(`  ${tpl.description}`);
       }
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: { templates: tree },
+        details: { templates: tpls },
       };
     } catch (e: any) {
       return {
@@ -193,6 +190,83 @@ const listTemplatesTool: AgentTool = {
         details: {},
         isError: true,
       };
+    }
+  },
+};
+
+/** Tool: fetch one template's field definitions so the agent can explain / use it. */
+const getTemplateTool: AgentTool = {
+  name: "get_template",
+  label: "查看模板字段",
+  description:
+    "获取指定抽取模板的字段定义（字段序号、名称、数据来源、类型等），用于向用户解释模板或据此从单据中抽取字段。参数 template_id（先用 list_extraction_templates 查到 ID）。",
+  parameters: Type.Object({
+    template_id: Type.String({ description: "模板ID，如 customs_declaration" }),
+  }),
+  async execute(_toolCallId, params) {
+    const id = (params as { template_id: string }).template_id;
+    try {
+      const resp = await backendFetch(`${BACKEND_URL}/api/templates/${id}/fields`);
+      if (!resp.ok) throw new Error(`Backend ${resp.status}`);
+      const d = await resp.json();
+      const fields = (d.extraction_fields || [])
+        .map((f: any) => `- ${f.field_no ?? ""} ${f.label || f.name}（来源: ${f.data_source || "—"}）`)
+        .join("\n");
+      return {
+        content: [{ type: "text", text: `模板「${d.name || id}」共 ${(d.extraction_fields || []).length} 个字段：\n${fields}` }],
+        details: d,
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `获取模板失败: ${e.message}` }], details: {}, isError: true };
+    }
+  },
+};
+
+/** Tool: list recent extraction history so the agent can reference past results. */
+const listHistoryTool: AgentTool = {
+  name: "list_history",
+  label: "查抽取历史",
+  description:
+    "列出最近的抽取历史记录（id、文件名、方法、时间、字段数），用于回顾或定位某次抽取结果。无参数。要看某条的完整内容再调用 get_history_result。",
+  parameters: Type.Object({}),
+  async execute() {
+    try {
+      const resp = await backendFetch(`${BACKEND_URL}/api/history`);
+      if (!resp.ok) throw new Error(`Backend ${resp.status}`);
+      const d = await resp.json();
+      const items = (d.history || []).slice(0, 15);
+      const lines = items.map(
+        (h: any) => `- [${h.id}] ${h.filename}（${h.method || "—"}, ${h.field_count || 0} 字段, ${(h.created_at || "").slice(0, 16).replace("T", " ")}）`,
+      );
+      return {
+        content: [{ type: "text", text: items.length ? `最近 ${items.length} 条抽取历史：\n${lines.join("\n")}` : "暂无抽取历史。" }],
+        details: { history: items },
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `获取历史失败: ${e.message}` }], details: {}, isError: true };
+    }
+  },
+};
+
+/** Tool: fetch a past extraction result (declaration Markdown) by history id. */
+const getHistoryResultTool: AgentTool = {
+  name: "get_history_result",
+  label: "读取历史结果",
+  description:
+    "根据历史记录 id 读取该次抽取的完整结果（报关单 Markdown 表格）。先用 list_history 找到 id。参数 history_id。",
+  parameters: Type.Object({
+    history_id: Type.String({ description: "历史记录ID" }),
+  }),
+  async execute(_toolCallId, params) {
+    const id = (params as { history_id: string }).history_id;
+    try {
+      const resp = await backendFetch(`${BACKEND_URL}/api/history/${id}`);
+      if (!resp.ok) throw new Error(`Backend ${resp.status}`);
+      const d = await resp.json();
+      const md = d.markdown || "（该记录没有 Markdown 结果）";
+      return { content: [{ type: "text", text: md.slice(0, 6000) }], details: d };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `读取结果失败: ${e.message}` }], details: {}, isError: true };
     }
   },
 };
@@ -284,6 +358,56 @@ ${options?.extraSystemPrompt || ""}`;
   });
 
   return { agent, ctx };
+}
+
+// ─── Chat Assistant Factory ─────────────────────────────────────────
+// The conversational "智能助手" agent. Unlike createAgent (thin: read + list
+// templates), this wires the full toolset so the assistant can actually DO
+// work in a conversation: read/extract documents, run a multi-invoice merge,
+// look up past extraction results, and explain templates. A fresh merge
+// SummaryContext is bound per request, so concurrent chats don't share state.
+
+function buildChatSystemPrompt(): string {
+  const skills = getSkills();
+  const skillsBlock = skills.map(formatSkillForPrompt).join("\n\n");
+  return `你是 Delta IDP 智能助手 —— 一个专业、友好的报关 AI 助手，帮用户处理国际物流单据（商业发票、装箱单、报关资料）。你可以调用工具真正完成工作，不要只凭空回答。
+
+## 你的能力与对应工具
+- **读单据/抽字段**：用户给出文件路径或上传文件时，先用 \`read_document\` 读取完整内容，再结合 \`get_template\`（用 \`list_extraction_templates\` 查模板ID）的字段定义抽取并用 Markdown 表格呈现。
+- **多票合并申报**：用户要把多张发票(_IV)和箱单(_PL)合并成一份报关单时，严格按下方 customs-merge skill：对每份 _IV 调 \`read_invoice\`、每份 _PL 调 \`read_packing_list\`（可并行），再依次 \`check_consistency\` → \`merge_declarations\` → \`render_declaration\`。**禁止自己做加法**，合计必须来自工具。请在**同一轮**里完成全部读取与合并（工具的累积上下文不跨消息保留）。
+- **查抽取历史/结果**：用户问“上次抽的那个/历史结果”时，用 \`list_history\` 找到记录ID，再用 \`get_history_result\` 读完整报关单。
+- **模板问答**：用 \`list_extraction_templates\` / \`get_template\` 列出并解释模板字段。
+
+## 行为准则
+1. 能用工具拿到事实就用工具，不要编造字段值；工具返回什么就用什么，缺失就如实说“未识别/缺失”。
+2. 回答用简洁专业的中文；涉及表格数据时用 Markdown 表格。
+3. 一次只做用户要求的事；需要多步时先用一句话说明你要做什么，再调用工具。
+
+${skillsBlock}`;
+}
+
+export function createChatAgent() {
+  const { tools: mergeTools } = summaryTools();
+  return new Agent({
+    initialState: {
+      systemPrompt: buildChatSystemPrompt(),
+      model: qwenModel,
+      thinkingLevel: "off",
+      tools: [
+        readDocumentTool,
+        listTemplatesTool,
+        getTemplateTool,
+        listHistoryTool,
+        getHistoryResultTool,
+        ...mergeTools,
+      ],
+      messages: [],
+    },
+    getApiKey: (provider) => {
+      if (provider === "dashscope") return DASHSCOPE_API_KEY;
+      return undefined;
+    },
+  });
 }
 
 export type { Agent, Skill };

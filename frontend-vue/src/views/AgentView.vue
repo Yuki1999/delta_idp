@@ -15,12 +15,16 @@
 
       <hr class="divider" />
 
-      <hr class="divider" />
-
-      <label class="toggle">
-        <input type="checkbox" v-model="agent.useQwen" />
-        <span>使用 Qwen3.6-27B</span>
-      </label>
+      <div class="cap-card">
+        <div class="cap-title">助手能做什么</div>
+        <ul class="cap-list">
+          <li>读单据并抽取报关字段</li>
+          <li>多张发票箱单合并申报</li>
+          <li>查询历史抽取结果</li>
+          <li>解释抽取模板字段</li>
+        </ul>
+        <div class="cap-hint">由 pi-agent 驱动，会自动调用工具完成任务</div>
+      </div>
     </aside>
 
     <!-- Chat Area -->
@@ -39,7 +43,10 @@
         <div v-if="!agent.messages.length && !agent.isProcessing" class="welcome">
           <div class="welcome-icon">π</div>
           <h2>你好，我是 Delta IDP 智能助手</h2>
-          <p>拖拽文件到此处上传，或直接输入问题开始对话。</p>
+          <p>拖拽单据到此处上传，或直接提问。我会自动调用工具帮你读单据、抽字段、合并申报、查历史。</p>
+          <div class="welcome-chips">
+            <button v-for="q in quickActions" :key="q" class="welcome-chip" @click="handleSend(q)">{{ q }}</button>
+          </div>
         </div>
         <ChatBubble v-for="(m, i) in agent.messages" :key="i" :role="m.role" :content="m.content" :time="m.time" :is-typing="m.isTyping" />
         <!-- Processing indicator -->
@@ -87,7 +94,7 @@ function onDragLeave() {
   }
 }
 
-const quickActions = ['提取发票号码', '提取发货单位和收货单位', '提取总数量和总金额', '提取所有产品编号', '提取毛重和净重']
+const quickActions = ['查看可用的抽取模板', '查最近的抽取结果', '把上传的资料抽成报关单', '解释报关单模板有哪些字段', '如何做多票合并申报']
 
 function onDrop(e) {
   dragCounter = 0
@@ -137,8 +144,16 @@ onMounted(async () => {
 .agent-layout { display: grid; grid-template-columns: 280px 1fr; flex: 1; min-height: 0; }
 
 /* ─── Left Column ─────────────────────────────── */
-.sessions-col { background: white; border-right: 1px solid var(--c-gray-200); padding: 16px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
-.sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--c-gray-400); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
+.sessions-col { background: var(--c-canvas); border-right: 1px solid var(--c-border); padding: 16px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.sec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--c-gray-500); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
+
+/* Capability card */
+.cap-card { background: white; border: 1px solid var(--c-border); border-radius: var(--radius-lg); padding: 14px; box-shadow: var(--shadow-sm); }
+.cap-title { font-size: 12px; font-weight: 700; color: var(--c-gray-700); margin-bottom: 8px; }
+.cap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.cap-list li { font-size: 12px; color: var(--c-gray-600); padding-left: 18px; position: relative; }
+.cap-list li::before { content: ''; position: absolute; left: 4px; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--c-primary); }
+.cap-hint { font-size: 11px; color: var(--c-gray-400); margin-top: 10px; line-height: 1.5; }
 .no-files { font-size: 12px; color: var(--c-gray-400); padding: 8px; }
 .divider { border: none; border-top: 1px solid var(--c-gray-200); margin: 4px 0; }
 .btn-dashed { width: 100%; padding: 10px; border: 2px dashed var(--c-gray-300); border-radius: var(--radius); background: none; cursor: pointer; font-size: 13px; color: var(--c-gray-500); transition: all var(--t-fast); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -147,9 +162,9 @@ onMounted(async () => {
 
 /* ─── Sessions ────────────────────────────────── */
 .session-list { display: flex; flex-direction: column; gap: 4px; }
-.session-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all var(--t-fast); }
-.session-item:hover { background: var(--c-gray-100); }
-.session-item.active { background: var(--c-primary-light); color: var(--c-primary); }
+.session-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all var(--t-fast); border: 1px solid transparent; }
+.session-item:hover { background: white; border-color: var(--c-border); }
+.session-item.active { background: var(--c-primary-50); color: var(--c-primary); border-color: var(--c-primary-light); }
 .sess-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .sess-count { font-size: 10px; background: var(--c-gray-200); color: var(--c-gray-500); padding: 1px 6px; border-radius: 10px; }
 .session-item.active .sess-count { background: var(--c-primary); color: white; }
@@ -163,10 +178,13 @@ onMounted(async () => {
 .drag-overlay { position: absolute; inset: 0; z-index: 50; background: rgba(37,99,235,.06); display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .drag-hint { background: white; padding: 24px 48px; border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); font-size: 18px; font-weight: 600; color: var(--c-primary); display: flex; align-items: center; gap: 10px; }
 .chat-msgs { flex: 1; min-height: 0; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
-.welcome { text-align: center; padding: 80px 20px; }
-.welcome-icon { width: 80px; height: 80px; border-radius: 24px; background: linear-gradient(135deg, var(--c-primary), var(--c-purple)); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: white; font-size: 36px; }
-.welcome h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
-.welcome p { font-size: 14px; color: var(--c-gray-500); }
+.welcome { text-align: center; padding: 64px 20px; max-width: 560px; margin: 0 auto; }
+.welcome-icon { width: 76px; height: 76px; border-radius: 22px; background: linear-gradient(135deg, var(--c-primary), var(--c-purple)); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: white; font-size: 34px; font-weight: 600; box-shadow: var(--shadow-lg); }
+.welcome h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; letter-spacing: -.01em; }
+.welcome p { font-size: 14px; color: var(--c-gray-500); line-height: 1.65; }
+.welcome-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+.welcome-chip { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--c-border); background: white; color: var(--c-gray-700); font-size: 12.5px; cursor: pointer; transition: all var(--t-fast); box-shadow: var(--shadow-sm); }
+.welcome-chip:hover { border-color: var(--c-primary); color: var(--c-primary); background: var(--c-primary-50); transform: translateY(-1px); }
 
 /* ─── Processing indicator ───────────────────── */
 .processing-banner { display: flex; align-items: center; gap: 10px; padding: 10px 18px; margin: 4px 0; background: var(--c-primary-light); border-radius: var(--radius); font-size: 13px; color: var(--c-primary); animation: fadeIn .3s ease; }

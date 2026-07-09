@@ -3,7 +3,7 @@
  * Bridges the pi agent to the Vue frontend via HTTP/SSE.
  */
 import express from "express";
-import { createAgent, createSummaryAgent } from "./agent.js";
+import { createAgent, createSummaryAgent, createChatAgent } from "./agent.js";
 import * as reviews from "./review.js";
 import { readdirSync, statSync } from "node:fs";
 import { join as pathJoin, resolve as pathResolve, dirname } from "node:path";
@@ -57,7 +57,7 @@ app.post("/api/agent/chat", async (req, res) => {
   };
 
   try {
-    const agent = createAgent();
+    const agent = createChatAgent();
 
     // Build initial messages from history and convert to pi format
     const messages = [];
@@ -111,10 +111,13 @@ app.post("/api/agent/chat", async (req, res) => {
           }
           break;
         }
-        case "tool_execution_start":
+        case "tool_execution_start": {
           toolName = (event as any).toolName || "";
-          send("tool_start", { tool: toolName, message: `正在调用 ${toolName}...` });
+          const toolDef = (agent as any).state?.tools?.find((t: any) => t.name === toolName);
+          const label = toolDef?.label || toolName;
+          send("tool_start", { tool: toolName, label, message: `正在${label}...` });
           break;
+        }
         case "tool_execution_end":
           send("tool_end", { tool: toolName });
           toolName = "";

@@ -136,7 +136,13 @@ async function delSession(id) {
 
 onMounted(async () => {
   await agent.loadSessions()
-  if (!agent.sessions.length) await newSession()
+  if (!agent.sessions.length) {
+    await newSession()
+  } else {
+    // Auto-open the most recent session (list is sorted newest-first) so a
+    // returning user immediately sees their retained conversation history.
+    await switchSession(agent.sessions[0].id)
+  }
 })
 </script>
 

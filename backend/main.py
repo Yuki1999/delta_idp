@@ -62,6 +62,12 @@ app.add_middleware(
 # Enabled only when BASIC_AUTH_PASS is set. Protects every endpoint except the
 # health probe. The SPA is served same-origin, so the browser replays the
 # Basic credentials automatically after the initial prompt — no frontend change.
+#
+# IMPORTANT: implemented as a *pure ASGI* middleware, NOT Starlette's
+# BaseHTTPMiddleware (@app.middleware("http")). BaseHTTPMiddleware buffers/breaks
+# long-lived streaming responses, which killed the agent SSE stream (and the
+# /api/agent/* reverse proxy). A pure ASGI middleware passes send/receive through
+# untouched, so streaming/SSE works.
 import base64
 import secrets as _secrets
 from starlette.responses import Response as _Response
@@ -78,23 +84,36 @@ if not _AUTH_ENABLED:
     )
 
 
-@app.middleware("http")
-async def _basic_auth_middleware(request: Request, call_next):
-    if not _AUTH_ENABLED or request.url.path == "/api/health":
-        return await call_next(request)
-    header = request.headers.get("authorization", "")
-    if header.startswith("Basic "):
-        try:
-            user, _, pw = base64.b64decode(header[6:]).decode("utf-8").partition(":")
-        except Exception:
-            user, pw = "", ""
-        if _secrets.compare_digest(user, _BASIC_AUTH_USER) and _secrets.compare_digest(pw, _BASIC_AUTH_PASS):
-            return await call_next(request)
-    return _Response(
-        status_code=401,
-        headers={"WWW-Authenticate": 'Basic realm="Delta IDP"'},
-        content="Unauthorized",
-    )
+class BasicAuthMiddleware:
+    """Pure-ASGI HTTP Basic auth. Streams-safe (no response buffering)."""
+
+    def __init__(self, app, user: str, password: str):
+        self.app = app
+        self.user = user
+        self.password = password
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") == "/api/health":
+            return await self.app(scope, receive, send)
+        headers = dict(scope.get("headers") or [])
+        auth = headers.get(b"authorization", b"").decode("latin-1")
+        if auth.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(auth[6:]).decode("utf-8").partition(":")
+            except Exception:
+                user, pw = "", ""
+            if _secrets.compare_digest(user, self.user) and _secrets.compare_digest(pw, self.password):
+                return await self.app(scope, receive, send)
+        resp = _Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Delta IDP"'},
+            content="Unauthorized",
+        )
+        return await resp(scope, receive, send)
+
+
+if _AUTH_ENABLED:
+    app.add_middleware(BasicAuthMiddleware, user=_BASIC_AUTH_USER, password=_BASIC_AUTH_PASS)
 
 # Initialize components (lazy init for API-dependent ones)
 template_extractor = TemplateExtractor()
@@ -786,8 +805,13 @@ def _infer_uploaded_folder(folder_name: str) -> tuple[str, List[str]]:
     return "", []
 
 
-def _enrich_history_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """Backfill preview metadata for older history entries saved without input paths."""
+def _enrich_history_entry(entry: Dict[str, Any], deep: bool = False) -> Dict[str, Any]:
+    """Backfill preview metadata for older history entries saved without input paths.
+
+    `deep=True` enables the expensive filesystem lookups (rglob over uploads/) and
+    should only be used for a single-entry fetch. The list endpoint passes
+    deep=False so it doesn't scan the whole uploads dir once per history row
+    (that was O(entries × files) on every /api/history call)."""
     enriched = dict(entry)
     filename = enriched.get("filename", "")
 
@@ -798,7 +822,7 @@ def _enrich_history_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
             enriched["folder_path"] = folder_path
             enriched["folder_files"] = folder_files
 
-    if not enriched.get("file_path") and isinstance(filename, str) and not filename.startswith("["):
+    if deep and not enriched.get("file_path") and isinstance(filename, str) and not filename.startswith("["):
         file_path = _find_uploaded_file_by_original_name(filename)
         if file_path:
             enriched["file_path"] = file_path
@@ -1008,7 +1032,19 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             max_tokens=8192,
             temperature=0.1,
         )
-        reply = response.choices[0].message.content.strip()
+        choice = response.choices[0]
+        reply = (choice.message.content or "").strip()
+
+        # The model can hit the 8192-token output cap and silently drop line
+        # items even though the prompt forbids truncation. Surface it instead of
+        # returning a partial declaration that looks complete.
+        truncated = getattr(choice, "finish_reason", None) == "length"
+        if truncated:
+            reply += (
+                "\n\n> ⚠️ **输出被截断**：本次结果达到模型最大输出长度，商品明细可能不完整。"
+                "建议对多票场景使用「汇总模式」（由工具确定性合并、不受长度限制），"
+                "或减少单次处理的文件数量后重试。"
+            )
 
         # Step 6: Save result
         result_data = {
@@ -1018,6 +1054,7 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             "field_count": field_count,
             "summary_mode": summary_mode,
             "doc_stats": doc_stats,
+            "truncated": truncated,
         }
         storage.update_task(
             task_id,
@@ -1074,7 +1111,7 @@ async def get_history(history_id: str):
     entry = storage.get_extraction_history(history_id)
     if not entry:
         raise HTTPException(status_code=404, detail="History entry not found")
-    return _enrich_history_entry(entry)
+    return _enrich_history_entry(entry, deep=True)
 
 
 @app.delete("/api/history/{history_id}")
@@ -1119,41 +1156,51 @@ async def proxy_agent(request: Request, path: str):
 
     body = await request.body()
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
-        upstream_req = client.build_request(
-            request.method,
-            target,
-            headers={
-                k: v for k, v in request.headers.items()
-                if k.lower() not in ("host", "content-length", "transfer-encoding")
-            },
-            content=body if body else None,
-        )
+    # NOTE: do NOT wrap this in `async with httpx.AsyncClient() as client: ... return`.
+    # Returning the StreamingResponse from inside the context manager closes the
+    # client immediately, so the streaming body iterates over a closed transport
+    # and only the first buffered chunk gets through (SSE dies after one event).
+    # Keep the client open for the whole stream and close it in body_iter's finally.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+    upstream_req = client.build_request(
+        request.method,
+        target,
+        headers={
+            k: v for k, v in request.headers.items()
+            if k.lower() not in ("host", "content-length", "transfer-encoding")
+        },
+        content=body if body else None,
+    )
+    try:
         upstream = await client.send(upstream_req, stream=True)
+    except Exception:
+        await client.aclose()
+        raise
 
-        # Filter hop-by-hop headers
-        hop_by_hop = {
-            "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-            "te", "trailers", "transfer-encoding", "upgrade", "content-length",
-            "content-encoding",
-        }
-        resp_headers = {
-            k: v for k, v in upstream.headers.items()
-            if k.lower() not in hop_by_hop
-        }
+    # Filter hop-by-hop headers
+    hop_by_hop = {
+        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+        "te", "trailers", "transfer-encoding", "upgrade", "content-length",
+        "content-encoding",
+    }
+    resp_headers = {
+        k: v for k, v in upstream.headers.items()
+        if k.lower() not in hop_by_hop
+    }
 
-        async def body_iter():
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
+    async def body_iter():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
 
-        return StreamingResponse(
-            body_iter(),
-            status_code=upstream.status_code,
-            headers=resp_headers,
-        )
+    return StreamingResponse(
+        body_iter(),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+    )
 
 
 # ─── Document Preview & Serve ─────────────────────────────────────────────────

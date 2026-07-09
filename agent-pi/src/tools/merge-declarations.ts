@@ -49,17 +49,62 @@ function round(n: number, decimals: number): number {
   return Math.round(n * m) / m;
 }
 
-/** Match PL item to IV item within the same invoice_no by samsung_pn (or part_no). */
-function findPlItem(
-  pl: PackingList | undefined,
-  ivItem: { samsung_pn?: string; part_no?: string; item_no?: string | number },
-): PackingListItem | undefined {
-  if (!pl) return undefined;
-  return pl.items.find(
-    (p) =>
-      (ivItem.samsung_pn && p.samsung_pn === ivItem.samsung_pn) ||
-      (ivItem.item_no !== undefined && p.item_no === ivItem.item_no),
-  );
+/**
+ * A packing list can spread one product (samsung_pn) across several carton
+ * rows. To attach correct per-line weights to an invoice item we must SUM all
+ * matching PL rows, not just take the first one (otherwise detail-row net/gross
+ * weights don't add up to the declaration totals). We pre-aggregate the PL by
+ * samsung_pn and by item_no, then consume each aggregate at most once so a
+ * duplicated key across invoice lines can't double-count.
+ */
+interface PlAggregate {
+  net: number;
+  gross: number;
+  ctns: (string | number)[];
+  matched: boolean;
+}
+
+function buildPlAggregates(pl: PackingList | undefined): {
+  byPn: Map<string, PlAggregate>;
+  byItem: Map<string, PlAggregate>;
+} {
+  const byPn = new Map<string, PlAggregate>();
+  const byItem = new Map<string, PlAggregate>();
+  if (!pl) return { byPn, byItem };
+  const accumulate = (map: Map<string, PlAggregate>, key: string, p: PackingListItem) => {
+    const a = map.get(key) || { net: 0, gross: 0, ctns: [], matched: false };
+    a.net += p.net_kg || 0;
+    a.gross += p.gross_kg || 0;
+    if (p.ctn_no !== undefined && p.ctn_no !== null && p.ctn_no !== "") a.ctns.push(p.ctn_no);
+    map.set(key, a);
+  };
+  for (const p of pl.items) {
+    if (p.samsung_pn) accumulate(byPn, String(p.samsung_pn), p);
+    if (p.item_no !== undefined) accumulate(byItem, String(p.item_no), p);
+  }
+  return { byPn, byItem };
+}
+
+/** Pull the (once-only) aggregate for an invoice item, preferring samsung_pn. */
+function takePlAggregate(
+  aggs: { byPn: Map<string, PlAggregate>; byItem: Map<string, PlAggregate> },
+  ivItem: { samsung_pn?: string; item_no?: string | number },
+): PlAggregate | undefined {
+  if (ivItem.samsung_pn) {
+    const a = aggs.byPn.get(String(ivItem.samsung_pn));
+    if (a && !a.matched) {
+      a.matched = true;
+      return a;
+    }
+  }
+  if (ivItem.item_no !== undefined) {
+    const a = aggs.byItem.get(String(ivItem.item_no));
+    if (a && !a.matched) {
+      a.matched = true;
+      return a;
+    }
+  }
+  return undefined;
 }
 
 export function mergeDeclarations(
@@ -96,8 +141,15 @@ export function mergeDeclarations(
   let seq = 1;
   for (const iv of invoices) {
     const pl = plByInvoice.get(iv.invoice_no);
+    const aggs = buildPlAggregates(pl);
     for (const ivItem of iv.items) {
-      const plItem = findPlItem(pl, ivItem);
+      const agg = takePlAggregate(aggs, ivItem);
+      const ctn =
+        agg && agg.ctns.length
+          ? agg.ctns.length === 1
+            ? agg.ctns[0]
+            : agg.ctns.join(",")
+          : undefined;
       items.push({
         seq: seq++,
         source_invoice: iv.invoice_no,
@@ -108,9 +160,9 @@ export function mergeDeclarations(
         qty: ivItem.qty,
         unit_price: ivItem.unit_price,
         amount: round(ivItem.amount, 2),
-        ctn_no: plItem?.ctn_no,
-        net_kg: plItem !== undefined ? round(plItem.net_kg, 3) : undefined,
-        gross_kg: plItem !== undefined ? round(plItem.gross_kg, 3) : undefined,
+        ctn_no: ctn,
+        net_kg: agg ? round(agg.net, 3) : undefined,
+        gross_kg: agg ? round(agg.gross, 3) : undefined,
       });
     }
   }

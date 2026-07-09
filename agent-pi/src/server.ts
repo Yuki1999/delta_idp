@@ -20,6 +20,19 @@ function isPathAllowed(p: string): boolean {
   const rp = pathResolve(p);
   return rp === _DATA_ROOT || rp.startsWith(_DATA_ROOT + "/");
 }
+
+// The backend now enforces HTTP Basic auth. agent-pi is an internal client of
+// the backend (task tracking, history save, document parsing), so it must send
+// the same credentials on every backend call or it gets 401.
+const _BACKEND_AUTH =
+  process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASS
+    ? "Basic " + Buffer.from(`${process.env.BASIC_AUTH_USER}:${process.env.BASIC_AUTH_PASS}`).toString("base64")
+    : "";
+function backendFetch(url: string, init: Record<string, any> = {}) {
+  const headers: Record<string, string> = { ...(init.headers || {}) };
+  if (_BACKEND_AUTH) headers["Authorization"] = _BACKEND_AUTH;
+  return fetch(url, { ...init, headers });
+}
 import * as sessions from "./sessions.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -329,7 +342,7 @@ ${plList}
   });
 
   try {
-    await fetch(`${BACKEND_URL}/api/history/save`, {
+    await backendFetch(`${BACKEND_URL}/api/history/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -431,7 +444,7 @@ app.post("/api/agent/extract-folder", async (req, res) => {
   let taskId = existingTaskId || "";
   if (!taskId) {
     try {
-      const taskResp = await fetch(`${BACKEND_URL}/api/tasks`, {
+      const taskResp = await backendFetch(`${BACKEND_URL}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -454,7 +467,7 @@ app.post("/api/agent/extract-folder", async (req, res) => {
   const updateTask = async (fields: Record<string, unknown>) => {
     if (!taskId) return;
     try {
-      await fetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
+      await backendFetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -483,7 +496,7 @@ app.post("/api/agent/extract-folder", async (req, res) => {
     send("status", { message: "正在解析文件夹中所有文档..." });
     await updateTask({ progress: "正在解析文件夹中所有文档..." });
 
-    const parseResp = await fetch(`${BACKEND_URL}/api/extract/folder`, {
+    const parseResp = await backendFetch(`${BACKEND_URL}/api/extract/folder`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ folder_path }),
@@ -504,7 +517,7 @@ app.post("/api/agent/extract-folder", async (req, res) => {
     let templateName = template_id;
     let promptTemplate = "";
     try {
-      const tplResp = await fetch(`${BACKEND_URL}/api/templates/${template_id}/fields`);
+      const tplResp = await backendFetch(`${BACKEND_URL}/api/templates/${template_id}/fields`);
       if (tplResp.ok) {
         const tplData = await tplResp.json();
         templateFields = tplData.extraction_fields || [];
@@ -599,7 +612,7 @@ ${combinedContent}`;
         field_count: fieldCount,
         created_at: new Date().toISOString(),
       };
-      await fetch(`${BACKEND_URL}/api/history/save`, {
+      await backendFetch(`${BACKEND_URL}/api/history/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(histEntry),
@@ -662,7 +675,7 @@ app.post("/api/agent/extract", async (req, res) => {
   let taskId = existingTaskId || "";
   if (!taskId) {
     try {
-      const taskResp = await fetch(`${BACKEND_URL}/api/tasks`, {
+      const taskResp = await backendFetch(`${BACKEND_URL}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -685,7 +698,7 @@ app.post("/api/agent/extract", async (req, res) => {
   const updateTask = async (fields: Record<string, unknown>) => {
     if (!taskId) return;
     try {
-      await fetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
+      await backendFetch(`${BACKEND_URL}/api/tasks/${taskId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -698,7 +711,7 @@ app.post("/api/agent/extract", async (req, res) => {
     send("status", { message: "正在解析文档（Excel→PDF→MinerU解析）..." });
     await updateTask({ progress: "正在解析文档..." });
 
-    const parseResp = await fetch(`${BACKEND_URL}/api/extract/mineru`, {
+    const parseResp = await backendFetch(`${BACKEND_URL}/api/extract/mineru`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ file_path, template_id: "auto", document_type, vendor }),

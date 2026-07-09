@@ -177,6 +177,35 @@ assertEq(md.includes("DS12650253-1 / DS12650253-2 / DS12650253-3"), true, "joine
 assertEq(md.includes("| 来源发票 |"), true, "source_invoice column present");
 assertEq(md.split("\n").filter((l) => l.includes("DS12650253-2")).length >= 4, true, "≥4 rows tagged DS12650253-2");
 
+// ─── Test 5: one PN spread across multiple PL cartons → weights summed ──
+
+console.log("\n[test] multi-carton PN → per-line net/gross summed (not first-only)");
+const ivMulti: Invoice = {
+  ...SHARED_HEADER,
+  file_path: "/fake/MC_IV.xlsx",
+  invoice_no: "MC-1",
+  items: [{ item_no: 1, po: "PO1", samsung_pn: "PN-X", qty: 300, unit_price: 1, amount: 300 }],
+  totals: { qty: 300, amount: 300 },
+};
+const plMulti: PackingList = {
+  file_path: "/fake/MC_PL.xlsx",
+  invoice_no: "MC-1",
+  items: [
+    { ctn_no: 1, item_no: 1, samsung_pn: "PN-X", qty: 100, net_kg: 5.0, gross_kg: 6.0, volume_cbm: 0.01 },
+    { ctn_no: 2, item_no: 1, samsung_pn: "PN-X", qty: 100, net_kg: 3.0, gross_kg: 4.0, volume_cbm: 0.01 },
+    { ctn_no: 3, item_no: 1, samsung_pn: "PN-X", qty: 100, net_kg: 2.0, gross_kg: 2.5, volume_cbm: 0.01 },
+  ],
+  totals: { ctn: 3, qty: 300, net_kg: 10.0, gross_kg: 12.5, volume_cbm: 0.03 },
+};
+const mergedMC = mergeDeclarations([ivMulti], [plMulti]);
+const mcItem = mergedMC.items[0];
+assertEq(mcItem.net_kg, 10.0, "detail net_kg = sum of 3 cartons (5+3+2)");
+assertEq(mcItem.gross_kg, 12.5, "detail gross_kg = sum of 3 cartons (6+4+2.5)");
+assertEq(mcItem.ctn_no, "1,2,3", "detail ctn_no lists all cartons");
+// Detail-row weights must now reconcile with the declaration totals.
+assertEq(mergedMC.items.reduce((s, it) => s + (it.net_kg || 0), 0), mergedMC.totals.net_kg, "Σ detail net_kg == total net_kg");
+assertEq(mergedMC.items.reduce((s, it) => s + (it.gross_kg || 0), 0), mergedMC.totals.gross_kg, "Σ detail gross_kg == total gross_kg");
+
 // ─── Summary ────────────────────────────────────────────────────────
 
 console.log(failed ? `\n❌ ${failed} check(s) failed` : "\n✅ all deterministic checks passed");

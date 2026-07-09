@@ -106,6 +106,17 @@ function getSkills(): Skill[] {
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
 
+// Backend enforces HTTP Basic auth; forward the same credentials on internal calls.
+const _BACKEND_AUTH =
+  process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASS
+    ? "Basic " + Buffer.from(`${process.env.BASIC_AUTH_USER}:${process.env.BASIC_AUTH_PASS}`).toString("base64")
+    : "";
+function backendFetch(url: string, init: Record<string, any> = {}) {
+  const headers: Record<string, string> = { ...(init.headers || {}) };
+  if (_BACKEND_AUTH) headers["Authorization"] = _BACKEND_AUTH;
+  return fetch(url, { ...init, headers });
+}
+
 /** Tool: read and parse an uploaded document via scripts/read_document.py */
 const readDocumentTool: AgentTool = {
   name: "read_document",
@@ -156,7 +167,7 @@ const listTemplatesTool: AgentTool = {
   parameters: Type.Object({}),
   async execute(_toolCallId, _params) {
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/templates/tree`);
+      const resp = await backendFetch(`${BACKEND_URL}/api/templates/tree`);
       if (!resp.ok) throw new Error(`Backend error: ${resp.status}`);
       const data = await resp.json();
       const tree = data.tree || [];

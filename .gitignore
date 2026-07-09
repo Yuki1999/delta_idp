@@ -12,3 +12,4 @@ uploads/
 .env
 .env.local
 ecosystem.config.cjs
+.claude/

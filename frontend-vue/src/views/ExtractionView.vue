@@ -72,37 +72,6 @@
       </section>
 
       <section class="panel">
-        <h2 class="panel-title"><Settings :size="14" :stroke-width="2" /> 抽取配置</h2>
-        <div class="form-g">
-          <label>抽取模板</label>
-          <select v-model="store.templateId" class="select">
-            <option v-for="t in store.templates" :key="t.id" :value="t.id">{{ t.name }} ({{ t.field_count || 0 }}个字段)</option>
-          </select>
-        </div>
-        <div class="form-g">
-          <label>技术路径</label>
-          <label v-for="m in methods" :key="m.value" class="radio-item">
-            <input type="radio" :value="m.value" v-model="store.method" />
-            <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
-          </label>
-        </div>
-        <div class="form-g" v-if="store.extractionMode === 'set'">
-          <label class="checkbox-item">
-            <input type="checkbox" v-model="store.summaryMode" />
-            <span>
-              <strong><BarChart3 :size="13" :stroke-width="2" style="vertical-align:-2px;margin-right:4px" /> 汇总模式</strong>
-              <small>多张发票箱单合并成一份报关单（金额、毛净重、件数累加，明细全部保留）</small>
-            </span>
-          </label>
-        </div>
-        <button class="btn primary full" @click="runExtraction" :disabled="!store.canExtract">
-          <Search :size="15" :stroke-width="2" />
-          <span>{{ extractBtnText }}</span>
-        </button>
-        <StatusBadge :message="store.statusMsg" :type="store.statusType" />
-      </section>
-
-      <section class="panel">
         <h2 class="panel-title"><Clock :size="14" :stroke-width="2" /> 抽取任务</h2>
         <!-- Running tasks -->
         <template v-if="store.tasks.length">
@@ -333,10 +302,10 @@
           </div>
         </div>
         <div v-else class="empty-state">
-          <div class="empty-icon"><BarChart3 :size="56" :stroke-width="1" /></div>
+          <div class="empty-icon"><BarChart3 :size="40" :stroke-width="1.5" /></div>
           <h2>报关资料抽取</h2>
           <p>上传单据或整套报关资料，系统将自动识别模式并提取关键字段</p>
-          <p class="empty-sub">支持拖放多个文件或从示例资料中选择</p>
+          <p class="empty-sub">支持拖放多个文件，或从左侧「示例资料」中选择一套体验</p>
         </div>
       </div>
     </section>
@@ -737,9 +706,9 @@ async function onTaskClick(task) {
 </script>
 
 <style scoped>
-.extraction-layout { display: grid; grid-template-columns: 320px 1fr; flex: 1; min-height: 0; }
-.sidebar { background: white; border-right: 1px solid var(--c-gray-200); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-.content { overflow: hidden; display: flex; flex-direction: column; }
+.extraction-layout { display: grid; grid-template-columns: 336px 1fr; flex: 1; min-height: 0; }
+.sidebar { background: var(--c-canvas); border-right: 1px solid var(--c-border); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.content { overflow: hidden; display: flex; flex-direction: column; background: var(--c-canvas); }
 
 /* ─── Viewer Layout ───────────────────────────── */
 .viewer-layout { display: grid; grid-template-columns: 1fr 320px; flex: 1; min-height: 0; overflow: hidden; }
@@ -856,11 +825,17 @@ async function onTaskClick(task) {
 
 /* ─── Empty State ─────────────────────────────── */
 .content-empty { flex: 1; display: flex; align-items: center; justify-content: center; }
-.empty-state { text-align: center; padding: 80px 20px; color: var(--c-gray-400); }
-.empty-icon { color: var(--c-gray-300); margin-bottom: 12px; display: flex; justify-content: center; }
-.empty-state h2 { font-size: 20px; font-weight: 700; color: var(--c-gray-600); margin-bottom: 8px; }
-.empty-state p { font-size: 14px; }
-.empty-sub { font-size: 12px; color: var(--c-gray-300); margin-top: 4px; }
+.empty-state { text-align: center; padding: 60px 24px; color: var(--c-gray-400); max-width: 420px; }
+.empty-icon {
+  color: var(--c-primary); margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
+  width: 84px; height: 84px; border-radius: 22px;
+  background: linear-gradient(180deg, var(--c-primary-50), #fff);
+  border: 1px solid var(--c-primary-light);
+  box-shadow: var(--shadow-md);
+}
+.empty-state h2 { font-size: 21px; font-weight: 700; color: var(--c-gray-800); margin-bottom: 10px; letter-spacing: -.01em; }
+.empty-state p { font-size: 14px; color: var(--c-gray-500); line-height: 1.65; }
+.empty-sub { font-size: 12.5px; color: var(--c-gray-400); margin-top: 6px; }
 
 /* ─── Processing State ────────────────────────── */
 .processing-state { text-align: center; padding: 60px 20px; }
@@ -944,8 +919,9 @@ async function onTaskClick(task) {
 }
 
 /* ─── Sidebar Components ──────────────────────── */
-.panel { background: white; border: 1px solid var(--c-gray-200); border-radius: var(--radius-lg); padding: 14px; }
-.panel-title { font-size: 13px; font-weight: 600; color: var(--c-gray-700); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.panel { background: white; border: 1px solid var(--c-border); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm); transition: box-shadow var(--t-normal); }
+.panel-title { font-size: 12px; font-weight: 700; color: var(--c-gray-500); margin-bottom: 12px; display: flex; align-items: center; gap: 7px; text-transform: uppercase; letter-spacing: .04em; }
+.panel-title :deep(svg) { color: var(--c-primary); }
 .panel-title :deep(svg) { flex-shrink: 0; }
 .file-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .form-g { margin-bottom: 10px; }
@@ -961,21 +937,22 @@ async function onTaskClick(task) {
 .checkbox-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--c-primary); }
 .checkbox-item strong { display: block; font-size: 12px; color: var(--c-gray-800); }
 .checkbox-item small { display: block; font-size: 10px; color: var(--c-gray-500); margin-top: 2px; }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all var(--t-normal); }
-.btn.primary { background: var(--c-primary); color: white; box-shadow: var(--shadow-sm); }
-.btn.primary:hover { background: var(--c-primary-dark); box-shadow: var(--shadow-md); }
-.btn.primary:active { transform: scale(.98); }
-.btn.primary:disabled { background: var(--c-gray-300); color: var(--c-gray-500); cursor: not-allowed; box-shadow: none; transform: none; }
-.btn.full { width: 100%; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all var(--t-normal); }
+.btn.primary { background: linear-gradient(180deg, #3b82f6 0%, var(--c-primary) 100%); color: white; box-shadow: 0 1px 2px rgba(37,99,235,.35), inset 0 1px 0 rgba(255,255,255,.18); }
+.btn.primary:hover:not(:disabled) { background: linear-gradient(180deg, #2f74ec 0%, var(--c-primary-dark) 100%); box-shadow: 0 6px 16px -4px rgba(37,99,235,.5); transform: translateY(-1px); }
+.btn.primary:active:not(:disabled) { transform: translateY(0); }
+.btn.primary:disabled { background: var(--c-gray-200); color: var(--c-gray-400); cursor: not-allowed; box-shadow: none; transform: none; }
+.btn.full { width: 100%; margin-top: 4px; }
 .sample-btn { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: none; border: none; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--c-gray-700); text-align: left; width: 100%; transition: all .15s; }
 .sample-btn:hover { background: var(--c-gray-100); }
 .sample-badge { width: 24px; height: 18px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: white; }
 .sample-badge.invoice { background: var(--c-primary); }
 .sample-badge.packing { background: var(--c-success); }
 .no-history { font-size: 12px; color: var(--c-gray-400); padding: 12px 0; text-align: center; }
-.history-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all .1s; position: relative; }
-.history-item:hover { background: var(--c-gray-100); }
-.history-item.active { background: var(--c-primary-light); }
+.history-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: var(--radius); cursor: pointer; font-size: 12px; transition: all var(--t-fast); position: relative; border: 1px solid transparent; }
+.history-item:hover { background: var(--c-gray-50); border-color: var(--c-border); }
+.history-item.active { background: var(--c-primary-50); border-color: var(--c-primary-light); }
+.history-item.active::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 3px; background: var(--c-primary); }
 .hi-header { flex: 1; min-width: 0; }
 .hi-file { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .hi-method { font-size: 9px; color: var(--c-primary); background: var(--c-primary-light); padding: 1px 5px; border-radius: 6px; }

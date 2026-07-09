@@ -30,11 +30,17 @@ function loadSessionsFile() {
 
 function saveSessionsFile(sessions) {
   ensureDir();
-  fs.writeFileSync(
-    path.join(STORAGE_DIR, SESSIONS_FILE),
-    JSON.stringify(sessions, null, 2),
-    "utf-8"
-  );
+  // Atomic write: temp file in the same dir + rename, so a crash or a
+  // concurrent reader never sees a half-written (corrupt) JSON file.
+  const target = path.join(STORAGE_DIR, SESSIONS_FILE);
+  const tmp = path.join(STORAGE_DIR, `.${SESSIONS_FILE}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2), "utf-8");
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
 }
 
 export function listSessions() {

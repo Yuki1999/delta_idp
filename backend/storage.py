@@ -4,6 +4,7 @@ Simple JSON file-based storage for extraction history and agent sessions.
 
 import json
 import os
+import tempfile
 import uuid
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -25,10 +26,25 @@ def _load_json(filename: str) -> List[Dict]:
     return []
 
 def _save_json(filename: str, data: List[Dict]):
+    """Atomically write JSON: serialize to a temp file in the same dir, then
+    os.replace() over the target. A crash or a concurrent reader can never
+    observe a half-written file (which would otherwise trip the
+    JSONDecodeError handler in _load_json and silently wipe the data)."""
     _ensure_dir()
     path = os.path.join(STORAGE_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    fd, tmp_path = tempfile.mkstemp(dir=STORAGE_DIR, prefix=f".{filename}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)  # atomic on POSIX
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ─── Extraction History ───────────────────────────────────────────

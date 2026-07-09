@@ -45,13 +45,56 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS: same-origin (the SPA is served by this backend) needs no CORS at all.
+# Only allow explicitly-listed cross-origin callers via ALLOWED_ORIGINS
+# (comma-separated). Wildcard "*" + credentials is an invalid/insecure combo.
+_allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_allowed_origins,
+    allow_credentials=bool(_allowed_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ─── Authentication (HTTP Basic) ─────────────────────────────────────────────
+# Enabled only when BASIC_AUTH_PASS is set. Protects every endpoint except the
+# health probe. The SPA is served same-origin, so the browser replays the
+# Basic credentials automatically after the initial prompt — no frontend change.
+import base64
+import secrets as _secrets
+from starlette.responses import Response as _Response
+
+_BASIC_AUTH_USER = os.environ.get("BASIC_AUTH_USER", "admin")
+_BASIC_AUTH_PASS = os.environ.get("BASIC_AUTH_PASS", "")
+_AUTH_ENABLED = bool(_BASIC_AUTH_PASS)
+if not _AUTH_ENABLED:
+    import warnings as _warnings
+    _warnings.warn(
+        "BASIC_AUTH_PASS is not set — API authentication is DISABLED and every "
+        "endpoint is publicly reachable. Set BASIC_AUTH_USER/BASIC_AUTH_PASS.",
+        RuntimeWarning,
+    )
+
+
+@app.middleware("http")
+async def _basic_auth_middleware(request: Request, call_next):
+    if not _AUTH_ENABLED or request.url.path == "/api/health":
+        return await call_next(request)
+    header = request.headers.get("authorization", "")
+    if header.startswith("Basic "):
+        try:
+            user, _, pw = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+        except Exception:
+            user, pw = "", ""
+        if _secrets.compare_digest(user, _BASIC_AUTH_USER) and _secrets.compare_digest(pw, _BASIC_AUTH_PASS):
+            return await call_next(request)
+    return _Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Delta IDP"'},
+        content="Unauthorized",
+    )
 
 # Initialize components (lazy init for API-dependent ones)
 template_extractor = TemplateExtractor()
@@ -69,6 +112,40 @@ def get_qwen():
     if qwen_extractor is None:
         qwen_extractor = QwenExtractor()
     return qwen_extractor
+
+
+# ─── Path confinement ────────────────────────────────────────────────────────
+# Client-supplied file_path / folder_path / filename must stay inside the data
+# directories we own (uploads + bundled samples). This blocks arbitrary file
+# read/parse (e.g. /etc/passwd) and path-traversal via "..". Symlinks are
+# resolved before the check, so a symlink escaping a root is rejected too.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_ALLOWED_DATA_ROOTS = [
+    Path(UPLOAD_DIR).resolve(),
+    (_PROJECT_ROOT / "samples").resolve(),
+]
+
+
+def _is_within_allowed_roots(p: str) -> bool:
+    if not p:
+        return False
+    try:
+        rp = Path(p).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    for root in _ALLOWED_DATA_ROOTS:
+        try:
+            rp.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _require_safe_path(p: str) -> None:
+    """Raise 403 if the path escapes the allowed data directories."""
+    if not _is_within_allowed_roots(p):
+        raise HTTPException(status_code=403, detail="Path is outside the allowed data directories")
 
 # Frontend directory (Vite build output of the Vue SPA)
 FRONTEND_DIR = os.environ.get(
@@ -266,6 +343,7 @@ async def extract_with_mineru(
     1. Send directly to MinerU for parsing → Markdown
     2. Return parsed markdown
     """
+    _require_safe_path(file_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -359,6 +437,7 @@ async def extract_with_qwen(
     Extraction is handled by the agent-pi service using qwen3.6-27b multimodal model.
     This endpoint provides the parsed document content.
     """
+    _require_safe_path(file_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -409,6 +488,7 @@ async def extract_hybrid(
     Extraction is handled by the agent-pi service using qwen3.6-27b multimodal model.
     This endpoint provides the parsed document content.
     """
+    _require_safe_path(file_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -463,6 +543,9 @@ async def extract_batch(
 
     results = []
     for fp in paths:
+        if not _is_within_allowed_roots(fp):
+            results.append({"file": fp, "error": "Path is outside the allowed data directories"})
+            continue
         if not os.path.exists(fp):
             results.append({"file": fp, "error": "File not found"})
             continue
@@ -741,6 +824,14 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
         file_path = input_data.get("file_path", "")
         summary_mode = bool(input_data.get("summary_mode", False))
 
+        # Reject any client-supplied path outside the allowed data directories.
+        if folder_path and not _is_within_allowed_roots(folder_path):
+            storage.update_task(task_id, status="failed", progress="Path is outside the allowed data directories")
+            return
+        if file_path and not _is_within_allowed_roots(file_path):
+            storage.update_task(task_id, status="failed", progress="Path is outside the allowed data directories")
+            return
+
         # Determine files to process
         files_to_process = []
         if folder_path and os.path.isdir(folder_path):
@@ -905,7 +996,13 @@ async def _run_standard_pipeline(task_id: str, template_id: str, input_data: Dic
             {"role": "user", "content": prompt},
         ]
 
-        response = qwen.client.chat.completions.create(
+        # The OpenAI client's create() is synchronous and blocks for the whole
+        # LLM call (tens of seconds). This runs inside an asyncio background task,
+        # so calling it directly would block the FastAPI event loop and freeze
+        # every other request. Offload it to a worker thread.
+        import asyncio
+        response = await asyncio.to_thread(
+            qwen.client.chat.completions.create,
             model=qwen.model,
             messages=messages,
             max_tokens=8192,
@@ -1062,29 +1159,33 @@ async def proxy_agent(request: Request, path: str):
 # ─── Document Preview & Serve ─────────────────────────────────────────────────
 
 def _resolve_upload_path(filename: str) -> str:
-    """Resolve filename to actual file path in uploads or project root."""
+    """Resolve a client-supplied filename to a real file, but ONLY within the
+    allowed data directories (uploads + samples). Every candidate is validated
+    with _is_within_allowed_roots so absolute paths / '..' cannot escape."""
     if not filename:
         return ""
 
     raw_path = Path(filename)
-    if raw_path.is_absolute() and raw_path.exists() and raw_path.is_file():
-        return str(raw_path)
-
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if os.path.exists(file_path):
-        return file_path
+    if raw_path.is_absolute():
+        if raw_path.exists() and raw_path.is_file() and _is_within_allowed_roots(str(raw_path)):
+            return str(raw_path)
+        return ""
 
     project_root = os.path.dirname(os.path.dirname(__file__))
-    file_path = os.path.join(project_root, filename)
-    if os.path.exists(file_path):
-        return file_path
+    candidates = [
+        os.path.join(UPLOAD_DIR, filename),
+        os.path.join(project_root, "samples", filename),
+    ]
+    for cand in candidates:
+        if os.path.exists(cand) and _is_within_allowed_roots(cand):
+            return cand
 
     # Older history entries only stored the original filename, while uploads are
     # stored as UUID-prefixed files. Pick the newest matching upload.
     inferred = _find_uploaded_file_by_original_name(os.path.basename(filename))
     if inferred:
         file_path = os.path.join(project_root, inferred)
-        if os.path.exists(file_path):
+        if os.path.exists(file_path) and _is_within_allowed_roots(file_path):
             return file_path
 
     return ""
@@ -1184,9 +1285,11 @@ async def document_preview(filename: str):
 async def get_sample_file(filename: str):
     """Serve sample document files from the project root directory."""
     project_root = os.path.dirname(os.path.dirname(__file__))
-    file_path = os.path.join(project_root, filename)
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return FileResponse(file_path, filename=filename)
+    # basename strips any path components so "../.." traversal is impossible.
+    safe_name = os.path.basename(filename)
+    file_path = os.path.join(project_root, safe_name)
+    if safe_name and os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path, filename=safe_name)
     raise HTTPException(status_code=404, detail="Sample file not found")
 
 
@@ -1246,6 +1349,7 @@ async def extract_folder(folder_path: str = Form(...)):
     For TXT: read directly.
     Returns concatenated markdown with section headers per file.
     """
+    _require_safe_path(folder_path)
     folder = Path(folder_path)
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=404, detail="Folder not found")

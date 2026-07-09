@@ -21,8 +21,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─── Configuration ─────────────────────────────────────────────────
 
-const DASHSCOPE_API_KEY =
-  process.env.DASHSCOPE_API_KEY || "sk-17a229bf21204572b5bf1d00d16d558d";
+const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || "";
+if (!DASHSCOPE_API_KEY) {
+  console.warn(
+    "[agent] DASHSCOPE_API_KEY is not set — Qwen calls will fail until it is provided via the environment.",
+  );
+}
 const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_MODEL_ID = "qwen3.6-27b";
 
@@ -115,10 +119,12 @@ const readDocumentTool: AgentTool = {
   }),
   async execute(_toolCallId, params) {
     const { file_path } = params;
-    const { execSync } = await import("node:child_process");
+    const { execFileSync } = await import("node:child_process");
     try {
       const scriptPath = new URL("../skills/doc-extraction/scripts/read_document.py", import.meta.url).pathname;
-      const result = execSync(`python3 "${scriptPath}" "${file_path}"`, {
+      // execFileSync (argv array) — file_path is passed as a literal argument,
+      // never interpreted by a shell, so it cannot inject commands.
+      const result = execFileSync("python3", [scriptPath, file_path], {
         encoding: "utf-8",
         timeout: 30000,
         env: { ...process.env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },

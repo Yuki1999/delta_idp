@@ -9,3 +9,6 @@ uploads/
 *.log
 /tmp/
 .vite/
+.env
+.env.local
+ecosystem.config.cjs

@@ -25,7 +25,17 @@ function loadReviews() {
 
 function saveReviews(reviews: any[]) {
   ensureDir();
-  fs.writeFileSync(path.join(STORAGE_DIR, REVIEW_FILE), JSON.stringify(reviews, null, 2), "utf-8");
+  // Atomic write: temp file + rename (see sessions.ts) so readers never see
+  // a partially-written file.
+  const target = path.join(STORAGE_DIR, REVIEW_FILE);
+  const tmp = path.join(STORAGE_DIR, `.${REVIEW_FILE}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(reviews, null, 2), "utf-8");
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
 }
 
 export function listReviews(status?: string) {

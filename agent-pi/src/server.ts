@@ -6,9 +6,20 @@ import express from "express";
 import { createAgent, createSummaryAgent } from "./agent.js";
 import * as reviews from "./review.js";
 import { readdirSync, statSync } from "node:fs";
-import { join as pathJoin } from "node:path";
+import { join as pathJoin, resolve as pathResolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
+
+// Confine client-supplied folder_path / file_path to the project data root
+// (delta_idp/). dist/server.js -> agent-pi -> delta_idp. Blocks arbitrary
+// filesystem access even if the backend proxy is somehow bypassed.
+const _DATA_ROOT = pathResolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+function isPathAllowed(p: string): boolean {
+  if (!p || typeof p !== "string") return false;
+  const rp = pathResolve(p);
+  return rp === _DATA_ROOT || rp.startsWith(_DATA_ROOT + "/");
+}
 import * as sessions from "./sessions.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -48,10 +59,12 @@ app.post("/api/agent/chat", async (req, res) => {
     // If user has uploaded a file, auto-read it via read_document.py script
     if (document_context && document_context.startsWith("file:")) {
       const filePath = document_context.slice(5);
-      const { execSync } = await import("node:child_process");
+      const { execFileSync } = await import("node:child_process");
       try {
         const scriptPath = new URL("../skills/doc-extraction/scripts/read_document.py", import.meta.url).pathname;
-        const result = execSync(`python3 "${scriptPath}" "${filePath}"`, {
+        // execFileSync (argv array) — never routes filePath through a shell,
+        // so a path containing shell metacharacters cannot inject commands.
+        const result = execFileSync("python3", [scriptPath, filePath], {
           encoding: "utf-8", timeout: 30000,
           env: { ...process.env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
         });
@@ -386,6 +399,10 @@ app.post("/api/agent/extract-folder", async (req, res) => {
     res.status(400).json({ error: "folder_path is required" });
     return;
   }
+  if (!isPathAllowed(folder_path)) {
+    res.status(403).json({ error: "folder_path is outside the allowed data directory" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -617,6 +634,11 @@ ${combinedContent}`;
 
 app.post("/api/agent/extract", async (req, res) => {
   const { file_path, method = "agent", document_type = "invoice", vendor = "generic", task_id: existingTaskId } = req.body;
+
+  if (!isPathAllowed(file_path)) {
+    res.status(403).json({ error: "file_path is outside the allowed data directory" });
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",

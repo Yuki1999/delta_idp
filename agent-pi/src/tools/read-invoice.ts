@@ -16,7 +16,7 @@
 
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import type { Invoice, SummaryContext } from "./types.js";
 
 const DASHSCOPE_URL =
@@ -25,10 +25,7 @@ const QWEN_MODEL =
   process.env.QWEN_MODEL_ID_JSON || process.env.QWEN_MODEL_ID || "qwen-plus";
 
 function getApiKey(): string {
-  return (
-    process.env.DASHSCOPE_API_KEY ||
-    "sk-17a229bf21204572b5bf1d00d16d558d" // fallback matches agent.ts default
-  );
+  return process.env.DASHSCOPE_API_KEY || "";
 }
 
 /** Extract the first JSON object appearing in a string (survives extra prose). */
@@ -62,7 +59,8 @@ function readRawText(filePath: string): { text: string; item_rows: number } {
     "../../skills/doc-extraction/scripts/read_document.py",
     import.meta.url,
   ).pathname;
-  const raw = execSync(`python3 "${scriptPath}" "${filePath}"`, {
+  // execFileSync (argv array) — filePath is a literal argument, never shell-parsed.
+  const raw = execFileSync("python3", [scriptPath, filePath], {
     encoding: "utf-8",
     timeout: 30000,
     // WSL proxy env can wedge subprocess if left set; scrub it.

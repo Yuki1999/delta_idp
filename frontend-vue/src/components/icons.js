@@ -25,6 +25,7 @@ export {
   Layers,
   Package,
   MessageSquare,
+  Paperclip,
   Plus,
   X,
   Check,

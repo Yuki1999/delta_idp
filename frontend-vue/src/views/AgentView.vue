@@ -61,6 +61,7 @@
         :active-file="agent.activeFile"
         @send="handleSend"
         @quick-action="handleSend"
+        @attach="handleAttach"
         @remove-file="agent.removeFile(0)"
       />
     </div>
@@ -96,12 +97,26 @@ function onDragLeave() {
 
 const quickActions = ['查看可用的抽取模板', '查最近的抽取结果', '把上传的资料抽成报关单', '解释报关单模板有哪些字段', '如何做多票合并申报']
 
+async function uploadFiles(files) {
+  for (const f of files) {
+    try {
+      const d = await agent.uploadFile(f)
+      agent.addMsg('system', `已加载单据：**${d.filename}**，可以直接让我抽取字段或提问。`)
+    } catch {
+      agent.addMsg('system', `文件上传失败：${f.name}`)
+    }
+  }
+  scrollDown()
+}
+
 function onDrop(e) {
   dragCounter = 0
   dragOver.value = false
-  for (const f of e.dataTransfer.files) {
-    agent.uploadFile(f).then(d => agent.addMsg('system', `已加载单据: **${d.filename}**`))
-  }
+  uploadFiles(Array.from(e.dataTransfer.files))
+}
+
+function handleAttach(files) {
+  uploadFiles(files)
 }
 
 function scrollDown() {

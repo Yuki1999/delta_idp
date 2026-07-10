@@ -9,9 +9,27 @@
       <button class="chip-close" @click="$emit('remove-file')" aria-label="移除文件"><X :size="13" :stroke-width="2" /></button>
     </div>
     <div class="input-row">
+      <input
+        ref="fileInput"
+        type="file"
+        class="file-input-hidden"
+        multiple
+        accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.txt,.csv,.md"
+        @change="onFilePicked"
+      />
+      <button
+        class="attach-btn"
+        type="button"
+        title="上传单据附件"
+        aria-label="上传单据附件"
+        :disabled="disabled"
+        @click="fileInput?.click()"
+      >
+        <Paperclip :size="20" :stroke-width="2" />
+      </button>
       <textarea
         v-model="text"
-        placeholder="输入你的问题，例如：提取发票号码和总金额..."
+        placeholder="输入你的问题，或点左侧回形针上传单据..."
         rows="1"
         @keydown="onKeydown"
         @input="resize"
@@ -27,11 +45,18 @@
 
 <script setup>
 import { ref, nextTick } from 'vue'
-import { FileText, X } from './icons.js'
+import { FileText, X, Paperclip } from './icons.js'
 defineProps({ disabled: Boolean, quickActions: { type: Array, default: () => [] }, activeFile: Object })
-const emit = defineEmits(['send', 'quick-action', 'remove-file'])
+const emit = defineEmits(['send', 'quick-action', 'remove-file', 'attach'])
 
 const text = ref('')
+const fileInput = ref(null)
+
+function onFilePicked(e) {
+  const files = Array.from(e.target.files || [])
+  if (files.length) emit('attach', files)
+  e.target.value = '' // allow re-picking the same file
+}
 
 function resize(e) {
   e.target.style.height = 'auto'
@@ -61,7 +86,11 @@ defineExpose({ setValue })
 
 <style scoped>
 .chat-input-bar { padding: 16px 24px; border-top: 1px solid var(--c-gray-200); background: white; }
-.input-row { display: flex; gap: 12px; align-items: flex-end; }
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.file-input-hidden { display: none; }
+.attach-btn { width: 48px; height: 48px; border-radius: 50%; background: var(--c-gray-100); color: var(--c-gray-600); border: 1.5px solid var(--c-gray-200); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .2s; flex-shrink: 0; }
+.attach-btn:hover:not(:disabled) { background: var(--c-primary-light); color: var(--c-primary); border-color: var(--c-primary); }
+.attach-btn:disabled { opacity: .5; cursor: not-allowed; }
 textarea { flex: 1; padding: 14px 18px; border: 1.5px solid var(--c-gray-300); border-radius: 16px; font-size: 14px; font-family: inherit; resize: none; min-height: 48px; max-height: 150px; line-height: 1.5; transition: border-color .2s; }
 textarea:focus { outline: none; border-color: var(--c-primary); box-shadow: 0 0 0 4px rgba(37,99,235,.08); }
 .send-btn { width: 48px; height: 48px; border-radius: 50%; background: var(--c-primary); color: white; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .2s; flex-shrink: 0; }

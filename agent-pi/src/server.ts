@@ -77,7 +77,8 @@ app.post("/api/agent/chat", async (req, res) => {
         const scriptPath = new URL("../skills/doc-extraction/scripts/read_document.py", import.meta.url).pathname;
         // execFileSync (argv array) — never routes filePath through a shell,
         // so a path containing shell metacharacters cannot inject commands.
-        const result = execFileSync("python3", [scriptPath, filePath], {
+        // PYTHON_BIN pins the .venv python (has openpyxl); PATH can be clobbered.
+        const result = execFileSync(process.env.PYTHON_BIN || "python3", [scriptPath, filePath], {
           encoding: "utf-8", timeout: 30000,
           env: { ...process.env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
         });

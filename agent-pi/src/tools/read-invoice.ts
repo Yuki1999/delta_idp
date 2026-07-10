@@ -60,7 +60,8 @@ function readRawText(filePath: string): { text: string; item_rows: number } {
     import.meta.url,
   ).pathname;
   // execFileSync (argv array) — filePath is a literal argument, never shell-parsed.
-  const raw = execFileSync("python3", [scriptPath, filePath], {
+  // PYTHON_BIN pins the .venv python (has openpyxl); PATH can be clobbered.
+  const raw = execFileSync(process.env.PYTHON_BIN || "python3", [scriptPath, filePath], {
     encoding: "utf-8",
     timeout: 30000,
     // WSL proxy env can wedge subprocess if left set; scrub it.

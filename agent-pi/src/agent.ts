@@ -135,7 +135,9 @@ const readDocumentTool: AgentTool = {
       const scriptPath = new URL("../skills/doc-extraction/scripts/read_document.py", import.meta.url).pathname;
       // execFileSync (argv array) — file_path is passed as a literal argument,
       // never interpreted by a shell, so it cannot inject commands.
-      const result = execFileSync("python3", [scriptPath, file_path], {
+      // PYTHON_BIN pins the project's .venv python (which has openpyxl); relying
+      // on PATH is fragile because `pm2 restart <name> --update-env` can clobber it.
+      const result = execFileSync(process.env.PYTHON_BIN || "python3", [scriptPath, file_path], {
         encoding: "utf-8",
         timeout: 30000,
         env: { ...process.env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },

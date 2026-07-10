@@ -1478,10 +1478,18 @@ if os.path.isdir(FRONTEND_ASSETS_DIR):
 
 
 def _spa_index() -> FileResponse:
-    """Return the SPA index.html for client-side routing."""
+    """Return the SPA index.html for client-side routing.
+
+    index.html must never be cached: it references hashed asset filenames that
+    change every build, so a stale cached index.html leaves users running an old
+    bundle after a deploy. The hashed /assets/* are immutable and cache freely.
+    """
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     raise HTTPException(status_code=404, detail="Frontend not built. Run `npm run build` in frontend-vue/.")
 
 
